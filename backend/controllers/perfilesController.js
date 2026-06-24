@@ -1,4 +1,4 @@
-const { poolPromise } = require('../config/db');
+const { poolPromise, sql } = require('../config/db');
 const { generateDocx } = require('../utils/docxGenerator');
 const { Packer } = require('docx');
 
@@ -6,33 +6,33 @@ const { Packer } = require('docx');
 exports.getAll = async (req, res) => {
   try {
     const pool = await poolPromise;
-    let result = await pool.query(
-      'SELECT a.id AS id, a.area AS area, a.cargo AS cargo, a.perfil_json AS perfilJson, a.fecha_creacion AS fechaCreacion, a.fecha_actualizacion AS fechaActualizacion FROM perfiles_cargo AS a ORDER BY a.fecha_actualizacion DESC'
-    );
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_ALL')
+      .input('DATA_JSON', sql.VarChar, null)
+      .execute('spPerfilesCargo')
+      .then(function (recordSet) {
+        let refresh = undefined;
+        if (process.env.NEWTOKEN && process.env.NEWTOKEN !== '')
+          refresh = process.env.NEWTOKEN;
 
-    const parsedData = result.recordset.map(row => {
-      let parsedJson = {};
-      try {
-        parsedJson = JSON.parse(row.perfilJson);
-      } catch (e) {
-        parsedJson = row.perfilJson;
-      }
-      return {
-        id: row.id,
-        area: row.area,
-        cargo: row.cargo,
-        perfil_json: parsedJson,
-        perfilJson: parsedJson,
-        fecha_creacion: row.fechaCreacion,
-        fechaCreacion: row.fechaCreacion,
-        fecha_actualizacion: row.fechaActualizacion,
-        fechaActualizacion: row.fechaActualizacion
-      };
-    });
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : [];
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
 
-    res.json(parsedData);
+        res.json({
+          data: parsedData,
+          token: refresh,
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.json(JSON.stringify([{ ErrMensaje: err.originalError ? err.originalError.info.message : err.message }]));
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ message: err.message });
   }
 };
 
@@ -41,36 +41,37 @@ exports.getById = async (req, res) => {
   try {
     const { id } = req.params;
     const pool = await poolPromise;
-    let result = await pool.query(
-      'SELECT a.id AS id, a.area AS area, a.cargo AS cargo, a.perfil_json AS perfilJson, a.fecha_creacion AS fechaCreacion, a.fecha_actualizacion AS fechaActualizacion FROM perfiles_cargo AS a WHERE a.id = ?',
-      [id]
-    );
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id }))
+      .execute('spPerfilesCargo')
+      .then(function (recordSet) {
+        let refresh = undefined;
+        if (process.env.NEWTOKEN && process.env.NEWTOKEN !== '')
+          refresh = process.env.NEWTOKEN;
 
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ error: 'Perfil no encontrado' });
-    }
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
 
-    const row = result.recordset[0];
-    let parsedJson = {};
-    try {
-      parsedJson = JSON.parse(row.perfilJson);
-    } catch (e) {
-      parsedJson = row.perfilJson;
-    }
+        if (!parsedData) {
+          return res.status(404).json({ error: 'Perfil no encontrado' });
+        }
 
-    res.json({
-      id: row.id,
-      area: row.area,
-      cargo: row.cargo,
-      perfil_json: parsedJson,
-      perfilJson: parsedJson,
-      fecha_creacion: row.fechaCreacion,
-      fechaCreacion: row.fechaCreacion,
-      fecha_actualizacion: row.fechaActualizacion,
-      fechaActualizacion: row.fechaActualizacion
-    });
+        res.json({
+          data: parsedData,
+          token: refresh,
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.json(JSON.stringify([{ ErrMensaje: err.originalError ? err.originalError.info.message : err.message }]));
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ message: err.message });
   }
 };
 
@@ -79,26 +80,26 @@ exports.exportDocx = async (req, res) => {
   try {
     const { id } = req.params;
     const pool = await poolPromise;
-    let result = await pool.query(
-      'SELECT a.id AS id, a.area AS area, a.cargo AS cargo, a.perfil_json AS perfilJson FROM perfiles_cargo AS a WHERE a.id = ?',
-      [id]
-    );
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id }))
+      .execute('spPerfilesCargo');
 
-    if (result.recordset.length === 0) {
+    let parsedData = null;
+    try {
+      parsedData = result.recordset[0]["DATOS"] ? JSON.parse(result.recordset[0]["DATOS"]) : null;
+    } catch (e) {
+      parsedData = result.recordset[0]["DATOS"];
+    }
+
+    if (!parsedData) {
       return res.status(404).json({ error: 'Perfil no encontrado' });
     }
 
-    const row = result.recordset[0];
-    try {
-      row.perfil_json = JSON.parse(row.perfilJson);
-    } catch (e) {
-      row.perfil_json = row.perfilJson;
-    }
-
-    const doc = generateDocx(row);
+    const doc = generateDocx(parsedData);
     const b64string = await Packer.toBuffer(doc);
 
-    const fileName = `20260122_ART_ROL_${row.cargo.toUpperCase().replace(/\s+/g, '_')}.docx`;
+    const fileName = `20260122_ART_ROL_${parsedData.cargo.toUpperCase().replace(/\s+/g, '_')}.docx`;
 
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -117,20 +118,34 @@ exports.create = async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
     }
 
-    const jsonString = typeof perfil_json === 'string' ? perfil_json : JSON.stringify(perfil_json);
-
     const pool = await poolPromise;
-    let result = await pool.query(
-      'INSERT INTO perfiles_cargo (area, cargo, perfil_json) OUTPUT INSERTED.id AS id, INSERTED.area AS area, INSERTED.cargo AS cargo VALUES (?, ?, ?)',
-      [area, cargo, jsonString]
-    );
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'INSERT')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ area, cargo, perfil_json }))
+      .execute('spPerfilesCargo')
+      .then(function (recordSet) {
+        let refresh = undefined;
+        if (process.env.NEWTOKEN && process.env.NEWTOKEN !== '')
+          refresh = process.env.NEWTOKEN;
 
-    res.status(201).json({
-      message: 'Perfil creado exitosamente',
-      perfil: result.recordset[0]
-    });
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
+
+        res.status(201).json({
+          data: parsedData,
+          token: refresh,
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.json(JSON.stringify([{ ErrMensaje: err.originalError ? err.originalError.info.message : err.message }]));
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ message: err.message });
   }
 };
 
@@ -144,21 +159,34 @@ exports.update = async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
     }
 
-    const jsonString = typeof perfil_json === 'string' ? perfil_json : JSON.stringify(perfil_json);
-
     const pool = await poolPromise;
-    let result = await pool.query(
-      'UPDATE perfiles_cargo SET area = ?, cargo = ?, perfil_json = ?, fecha_actualizacion = GETDATE() WHERE id = ?',
-      [area, cargo, jsonString, id]
-    );
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'UPDATE')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, area, cargo, perfil_json }))
+      .execute('spPerfilesCargo')
+      .then(function (recordSet) {
+        let refresh = undefined;
+        if (process.env.NEWTOKEN && process.env.NEWTOKEN !== '')
+          refresh = process.env.NEWTOKEN;
 
-    if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: 'Perfil no encontrado' });
-    }
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
 
-    res.json({ message: 'Perfil actualizado exitosamente' });
+        res.json({
+          data: parsedData,
+          token: refresh,
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.json(JSON.stringify([{ ErrMensaje: err.originalError ? err.originalError.info.message : err.message }]));
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ message: err.message });
   }
 };
 
@@ -167,17 +195,32 @@ exports.delete = async (req, res) => {
   try {
     const { id } = req.params;
     const pool = await poolPromise;
-    let result = await pool.query(
-      'DELETE FROM perfiles_cargo WHERE id = ?',
-      [id]
-    );
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'DELETE')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id }))
+      .execute('spPerfilesCargo')
+      .then(function (recordSet) {
+        let refresh = undefined;
+        if (process.env.NEWTOKEN && process.env.NEWTOKEN !== '')
+          refresh = process.env.NEWTOKEN;
 
-    if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: 'Perfil no encontrado' });
-    }
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
 
-    res.json({ message: 'Perfil eliminado exitosamente' });
+        res.json({
+          data: parsedData,
+          token: refresh,
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.json(JSON.stringify([{ ErrMensaje: err.originalError ? err.originalError.info.message : err.message }]));
+      });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ message: err.message });
   }
 };
