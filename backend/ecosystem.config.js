@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'totem-backend',
+      name: 'topTalent-backend',
       script: 'index.js',
       // En producción no se suele activar watch por defecto, pero se puede configurar
       watch: false,
