@@ -20,10 +20,14 @@ app.use(express.json());
 // Import modular routes
 const authRoutes = require('./routes/auth');
 const perfilesRoutes = require('./routes/perfiles');
+const vacantesRoutes = require('./routes/vacantes');
+const postulacionesRoutes = require('./routes/postulaciones');
 
 // Register modular routes
 app.use('/api/auth', authRoutes);
 app.use('/api/perfiles', perfilesRoutes);
+app.use('/api/vacantes', vacantesRoutes);
+app.use('/api/postulaciones', postulacionesRoutes);
 
 // Basic health check endpoint
 app.get('/api/health', (req, res) => {
