@@ -2,6 +2,61 @@ const { poolPromise, sql } = require('../config/db');
 const { generateDocx } = require('../utils/docxGenerator');
 const { Packer } = require('docx');
 
+// Helper function to call n8n Webhook
+async function obtenerPreguntasN8N(area, cargo, perfil_json) {
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  if (!webhookUrl) {
+    console.warn('N8N_WEBHOOK_URL not configured. Skipping questions generation.');
+    return null;
+  }
+  try {
+    const prompt = perfil_json.prompt || `A partir del siguiente perfil del cargo genera un banco de preguntas para ser utilizado durante la postulación.
+
+      Reglas:
+      - Genera entre 8 y 12 preguntas.
+      - Debe existir:
+        * 2 preguntas técnicas
+        * 2 preguntas sobre experiencia
+        * 2 preguntas sobre competencias
+        * 1 caso práctico
+        * 1 pregunta de motivación
+        * 1 pregunta de disponibilidad
+        * Preguntas adicionales solo si son realmente necesarias.
+      - Cada pregunta debe tener: id, categoria, tipo, titulo, pregunta, descripcion, peso, obligatoria, tiempo_estimado_segundos.
+      - Si la pregunta es cerrada genera las opciones.
+      - Si la pregunta es abierta genera una rúbrica de evaluación.
+      - Las preguntas deben derivarse automáticamente del perfil del cargo.
+      - Si el perfil exige conocimientos específicos (NIIF, Inventarios, SQL, Flutter, etc.) genera preguntas relacionadas con esos conocimientos.
+      - Si una función del cargo es crítica, genera un caso práctico basado en ella.
+      - Devuelve únicamente un JSON.`;
+
+    console.log(`Calling n8n webhook: ${webhookUrl}`);
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        prompt,
+        area,
+        cargo,
+        perfil_json
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`n8n response error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error calling n8n webhook:', error);
+    return null;
+  }
+}
+
+
 // GET all profiles
 exports.getAll = async (req, res) => {
   try {
@@ -224,3 +279,24 @@ exports.delete = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
+
+// POST generate questions using n8n (on-demand)
+exports.generateQuestions = async (req, res) => {
+  try {
+    const { area, cargo, perfil_json } = req.body;
+
+    if (!area || !cargo || !perfil_json) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
+    }
+
+    const preguntas = await obtenerPreguntasN8N(area, cargo, perfil_json);
+    if (!preguntas) {
+      return res.status(500).json({ error: 'No se pudieron generar las preguntas del cargo. Verifique la configuración del webhook.' });
+    }
+
+    res.json({ data: preguntas });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+

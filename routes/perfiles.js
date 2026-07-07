@@ -12,6 +12,9 @@ router.get('/:id', perfilesController.getById);
 // GET export profile as DOCX
 router.get('/:id/docx', perfilesController.exportDocx);
 
+// POST generate questions using n8n
+router.post('/generate-questions', perfilesController.generateQuestions);
+
 // POST create a new profile
 router.post('/', perfilesController.create);
 
