@@ -9,7 +9,7 @@ module.exports = {
       // Variables de entorno POR DEFECTO (Producción)
       env: {
         NODE_ENV: 'production',
-        PORT: 3500,
+        PORT: 3800,
         DB_USER: 'sa',
         DB_PASSWORD: 'sql2025DEVadmin',
         DB_SERVER: '190.85.54.78',
