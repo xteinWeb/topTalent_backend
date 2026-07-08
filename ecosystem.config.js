@@ -17,7 +17,7 @@ module.exports = {
         DB_PORT: 9788,
         DB_ENCRYPT: 'false',
         FRONTEND_URL: '',
-        N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook-test/ef34c04b-32a1-4358-b8d8-28a4d7948690',
+        N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
       },
 
       // Variables de entorno para Desarrollo (--env development)
@@ -31,7 +31,7 @@ module.exports = {
         DB_PORT: 1433,
         DB_ENCRYPT: 'false',
         FRONTEND_URL: 'http://localhost:4200',
-        N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook-test/ef34c04b-32a1-4358-b8d8-28a4d7948690',
+        N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
         watch: true // Activa watch en desarrollo para auto-recarga
       }
     }
