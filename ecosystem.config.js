@@ -23,7 +23,7 @@ module.exports = {
       // Variables de entorno para Desarrollo (--env development)
       env_development: {
         NODE_ENV: 'development',
-        PORT: 3000,
+        PORT: 3800,
         DB_USER: 'sa',
         DB_PASSWORD: 'ADMadm1234',
         DB_SERVER: '190.85.54.78',
