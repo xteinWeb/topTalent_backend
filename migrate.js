@@ -1,20 +1,20 @@
 const { sql, poolPromise } = require('./config/db');
 
 async function migrate() {
-  try {
-    console.log('Connecting to database...');
-    const pool = await poolPromise;
-    console.log('Checking database tables...');
-    
-    // 1. Create perfiles_cargo table if not exists
-    const checkPerfilesQuery = `
+    try {
+        console.log('Connecting to database...');
+        const pool = await poolPromise;
+        console.log('Checking database tables...');
+
+        // 1. Create perfiles_cargo table if not exists
+        const checkPerfilesQuery = `
       SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_NAME = 'perfiles_cargo'
     `;
-    const checkPerfilesResult = await pool.request().query(checkPerfilesQuery);
-    if (checkPerfilesResult.recordset.length === 0) {
-      console.log('Table "perfiles_cargo" does not exist. Creating...');
-      const createPerfilesQuery = `
+        const checkPerfilesResult = await pool.request().query(checkPerfilesQuery);
+        if (checkPerfilesResult.recordset.length === 0) {
+            console.log('Table "perfiles_cargo" does not exist. Creating...');
+            const createPerfilesQuery = `
         CREATE TABLE perfiles_cargo (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
           area NVARCHAR(150) NOT NULL,
@@ -24,21 +24,21 @@ async function migrate() {
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
         );
       `;
-      await pool.request().query(createPerfilesQuery);
-      console.log('Table "perfiles_cargo" created successfully.');
-    } else {
-      console.log('Table "perfiles_cargo" already exists.');
-    }
+            await pool.request().query(createPerfilesQuery);
+            console.log('Table "perfiles_cargo" created successfully.');
+        } else {
+            console.log('Table "perfiles_cargo" already exists.');
+        }
 
-    // 2. Create vacantes table if not exists
-    const checkVacantesQuery = `
+        // 2. Create vacantes table if not exists
+        const checkVacantesQuery = `
       SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_NAME = 'vacantes'
     `;
-    const checkVacantesResult = await pool.request().query(checkVacantesQuery);
-    if (checkVacantesResult.recordset.length === 0) {
-      console.log('Table "vacantes" does not exist. Creating...');
-      const createVacantesQuery = `
+        const checkVacantesResult = await pool.request().query(checkVacantesQuery);
+        if (checkVacantesResult.recordset.length === 0) {
+            console.log('Table "vacantes" does not exist. Creating...');
+            const createVacantesQuery = `
         CREATE TABLE vacantes (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
           perfil_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES perfiles_cargo(id) ON DELETE CASCADE,
@@ -49,21 +49,21 @@ async function migrate() {
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
         );
       `;
-      await pool.request().query(createVacantesQuery);
-      console.log('Table "vacantes" created successfully.');
-    } else {
-      console.log('Table "vacantes" already exists.');
-    }
+            await pool.request().query(createVacantesQuery);
+            console.log('Table "vacantes" created successfully.');
+        } else {
+            console.log('Table "vacantes" already exists.');
+        }
 
-    // 3. Create postulaciones table if not exists
-    const checkPostulacionesQuery = `
+        // 3. Create postulaciones table if not exists
+        const checkPostulacionesQuery = `
       SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
       WHERE TABLE_NAME = 'postulaciones'
     `;
-    const checkPostulacionesResult = await pool.request().query(checkPostulacionesQuery);
-    if (checkPostulacionesResult.recordset.length === 0) {
-      console.log('Table "postulaciones" does not exist. Creating...');
-      const createPostulacionesQuery = `
+        const checkPostulacionesResult = await pool.request().query(checkPostulacionesQuery);
+        if (checkPostulacionesResult.recordset.length === 0) {
+            console.log('Table "postulaciones" does not exist. Creating...');
+            const createPostulacionesQuery = `
         CREATE TABLE postulaciones (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
           vacante_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES vacantes(id) ON DELETE CASCADE,
@@ -77,18 +77,20 @@ async function migrate() {
           habilidades_json NVARCHAR(MAX) NOT NULL,
           hv_archivo_nombre NVARCHAR(250),
           hv_archivo_ruta NVARCHAR(MAX),
-          fecha_postulacion DATETIME2 DEFAULT GETDATE()
+          fecha_postulacion DATETIME2 DEFAULT GETDATE(),
+          respuesta_ia NVARCHAR(MAX),
+          estado_ia NVARCHAR(MAX)
         );
       `;
-      await pool.request().query(createPostulacionesQuery);
-      console.log('Table "postulaciones" created successfully.');
-    } else {
-      console.log('Table "postulaciones" already exists.');
-    }
+            await pool.request().query(createPostulacionesQuery);
+            console.log('Table "postulaciones" created successfully.');
+        } else {
+            console.log('Table "postulaciones" already exists.');
+        }
 
-    // 4. Create/Update spPerfilesCargo
-    console.log('Creating/Updating Stored Procedure spPerfilesCargo...');
-    await pool.request().query(`
+        // 4. Create/Update spPerfilesCargo
+        console.log('Creating/Updating Stored Procedure spPerfilesCargo...');
+        await pool.request().query(`
       CREATE OR ALTER PROCEDURE spPerfilesCargo
           @ACCION VARCHAR(50),
           @DATA_JSON NVARCHAR(MAX) = NULL
@@ -181,11 +183,11 @@ async function migrate() {
           END
       END;
     `);
-    console.log('Procedure "spPerfilesCargo" created/updated.');
+        console.log('Procedure "spPerfilesCargo" created/updated.');
 
-    // 5. Create/Update spVacantes
-    console.log('Creating/Updating Stored Procedure spVacantes...');
-    await pool.request().query(`
+        // 5. Create/Update spVacantes
+        console.log('Creating/Updating Stored Procedure spVacantes...');
+        await pool.request().query(`
       CREATE OR ALTER PROCEDURE spVacantes
           @ACCION VARCHAR(50),
           @DATA_JSON NVARCHAR(MAX) = NULL
@@ -299,11 +301,11 @@ async function migrate() {
           END
       END;
     `);
-    console.log('Procedure "spVacantes" created/updated.');
+        console.log('Procedure "spVacantes" created/updated.');
 
-    // 6. Create/Update spPostulaciones
-    console.log('Creating/Updating Stored Procedure spPostulaciones...');
-    await pool.request().query(`
+        // 6. Create/Update spPostulaciones
+        console.log('Creating/Updating Stored Procedure spPostulaciones...');
+        await pool.request().query(`
       CREATE OR ALTER PROCEDURE spPostulaciones
           @ACCION VARCHAR(50),
           @DATA_JSON NVARCHAR(MAX) = NULL
@@ -368,7 +370,9 @@ async function migrate() {
                       JSON_QUERY(p.habilidades_json) AS habilidades_json, 
                       p.hv_archivo_nombre, 
                       p.hv_archivo_ruta, 
-                      p.fecha_postulacion 
+                      p.fecha_postulacion,
+                      JSON_QUERY(p.respuesta_ia) AS respuesta_ia,
+                      p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   ORDER BY p.fecha_postulacion DESC
@@ -392,7 +396,9 @@ async function migrate() {
                       JSON_QUERY(p.habilidades_json) AS habilidades_json, 
                       p.hv_archivo_nombre, 
                       p.hv_archivo_ruta, 
-                      p.fecha_postulacion 
+                      p.fecha_postulacion,
+                      JSON_QUERY(p.respuesta_ia) AS respuesta_ia,
+                      p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   WHERE p.vacante_id = @vacante_id
@@ -429,14 +435,14 @@ async function migrate() {
           END
       END;
     `);
-    console.log('Procedure "spPostulaciones" created/updated.');
-    
-    console.log('Migrations executed successfully.');
-    process.exit(0);
-  } catch (err) {
-    console.error('Migration failed:', err);
-    process.exit(1);
-  }
+        console.log('Procedure "spPostulaciones" created/updated.');
+
+        console.log('Migrations executed successfully.');
+        process.exit(0);
+    } catch (err) {
+        console.error('Migration failed:', err);
+        process.exit(1);
+    }
 }
 
 migrate();
