@@ -371,7 +371,7 @@ async function migrate() {
                       p.hv_archivo_nombre, 
                       p.hv_archivo_ruta, 
                       p.fecha_postulacion,
-                      JSON_QUERY(p.respuesta_ia) AS respuesta_ia,
+                      CASE WHEN ISJSON(p.respuesta_ia) = 1 THEN JSON_QUERY(p.respuesta_ia) ELSE NULL END AS respuesta_ia,
                       p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
@@ -397,7 +397,7 @@ async function migrate() {
                       p.hv_archivo_nombre, 
                       p.hv_archivo_ruta, 
                       p.fecha_postulacion,
-                      JSON_QUERY(p.respuesta_ia) AS respuesta_ia,
+                      CASE WHEN ISJSON(p.respuesta_ia) = 1 THEN JSON_QUERY(p.respuesta_ia) ELSE NULL END AS respuesta_ia,
                       p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
