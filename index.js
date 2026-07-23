@@ -6,13 +6,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({
-  origin: [
-    'http://localhost:4200',
-    'http://181.79.25.235:3900',
-    'http://192.168.11.151:3900',
-    'http://181.79.25.235:4200',
-    'http://192.168.11.151:4200'
-  ],
+  origin: function (origin, callback) {
+    // Permitir peticiones sin origen (como Postman, mobile apps, etc.)
+    if (!origin) return callback(null, true);
+    // Dinámicamente permitimos cualquier origen para evitar bloqueos por cambio de IP/puerto
+    callback(null, true);
+  },
   credentials: true
 }));
 app.use(express.json());

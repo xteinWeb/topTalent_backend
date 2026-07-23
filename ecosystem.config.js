@@ -8,13 +8,13 @@ module.exports = {
 
       // Variables de entorno POR DEFECTO (Producción)
       env: {
-        NODE_ENV: 'production',
+        NODE_ENV: 'development',
         PORT: 3800,
         DB_USER: 'sa',
-        DB_PASSWORD: 'sql2025DEVadmin',
+        DB_PASSWORD: 'ADMadm1234',
         DB_SERVER: '190.85.54.78',
         DB_NAME: 'TOP_TALENT',
-        DB_PORT: 9788,
+        DB_PORT: 1433,
         DB_ENCRYPT: 'false',
         FRONTEND_URL: '',
         N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
