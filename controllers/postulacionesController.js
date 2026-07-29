@@ -48,7 +48,8 @@ exports.create = async (req, res) => {
       experiencias_json, 
       estudios_json, 
       idiomas_json, 
-      habilidades_json 
+      habilidades_json,
+      candidato_id
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo) {
@@ -73,7 +74,8 @@ exports.create = async (req, res) => {
       idiomas_json: typeof idiomas_json === 'string' ? JSON.parse(idiomas_json) : idiomas_json,
       habilidades_json: typeof habilidades_json === 'string' ? JSON.parse(habilidades_json) : habilidades_json,
       hv_archivo_nombre,
-      hv_archivo_ruta
+      hv_archivo_ruta,
+      candidato_id: candidato_id || null
     };
 
     const pool = await poolPromise;

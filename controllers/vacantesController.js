@@ -105,7 +105,7 @@ exports.getById = async (req, res) => {
 // POST create a new vacancy
 exports.create = async (req, res) => {
   try {
-    const { perfil_id, titulo, descripcion, estado } = req.body;
+    const { perfil_id, titulo, descripcion, estado, requiere_registro, configuracion_json } = req.body;
 
     if (!perfil_id || !titulo || !descripcion) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: perfil_id, titulo, descripcion' });
@@ -114,7 +114,14 @@ exports.create = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ perfil_id, titulo, descripcion, estado }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+        perfil_id, 
+        titulo, 
+        descripcion, 
+        estado,
+        requiere_registro: requiere_registro === undefined ? 1 : (requiere_registro ? 1 : 0),
+        configuracion_json: typeof configuracion_json === 'object' ? JSON.stringify(configuracion_json) : configuracion_json
+      }))
       .execute('spVacantes')
       .then(function (recordSet) {
         let refresh = undefined;
@@ -146,7 +153,7 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { perfil_id, titulo, descripcion, estado } = req.body;
+    const { perfil_id, titulo, descripcion, estado, requiere_registro, configuracion_json } = req.body;
 
     if (!perfil_id || !titulo || !descripcion) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: perfil_id, titulo, descripcion' });
@@ -155,7 +162,15 @@ exports.update = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'UPDATE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, perfil_id, titulo, descripcion, estado }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+        id, 
+        perfil_id, 
+        titulo, 
+        descripcion, 
+        estado,
+        requiere_registro: requiere_registro === undefined ? 1 : (requiere_registro ? 1 : 0),
+        configuracion_json: typeof configuracion_json === 'object' ? JSON.stringify(configuracion_json) : configuracion_json
+      }))
       .execute('spVacantes')
       .then(function (recordSet) {
         let refresh = undefined;
