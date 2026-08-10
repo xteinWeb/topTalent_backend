@@ -205,6 +205,101 @@ async function migrate() {
             await pool.request().query(alterPostulacionesQuery);
         }
 
+        // 3.5 Create catalogos table if not exists
+        const checkCatalogosQuery = `
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_NAME = 'catalogos'
+    `;
+        const checkCatalogosResult = await pool.request().query(checkCatalogosQuery);
+        if (checkCatalogosResult.recordset.length === 0) {
+            console.log('Table "catalogos" does not exist. Creating...');
+            const createCatalogosQuery = `
+        CREATE TABLE catalogos (
+          id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
+          tipo NVARCHAR(50) NOT NULL,
+          valor NVARCHAR(200) NOT NULL,
+          orden INT DEFAULT 0 NOT NULL,
+          activo BIT DEFAULT 1 NOT NULL
+        );
+      `;
+            await pool.request().query(createCatalogosQuery);
+            console.log('Table "catalogos" created successfully.');
+        } else {
+            console.log('Table "catalogos" already exists.');
+        }
+
+        // Seed catalogos with initial values (only if empty for each tipo)
+        console.log('Seeding catalogos...');
+        const seedCatalogos = [
+            { tipo: 'NIVEL_EDUCATIVO', valores: [
+                'Bachillerato / Educación Media',
+                'Técnico Profesional',
+                'Tecnólogo',
+                'Universitario / Profesional',
+                'Especialización',
+                'Maestría',
+                'Doctorado'
+            ]},
+            { tipo: 'TIPO_CAPACITACION', valores: [
+                'Curso',
+                'Diplomado',
+                'Seminario',
+                'Congreso',
+                'Certificación',
+                'Otro'
+            ]}
+        ];
+
+        for (const grupo of seedCatalogos) {
+            const existsResult = await pool.request()
+                .input('tipo', sql.NVarChar(50), grupo.tipo)
+                .query('SELECT COUNT(*) AS total FROM catalogos WHERE tipo = @tipo');
+
+            if (existsResult.recordset[0].total === 0) {
+                for (let i = 0; i < grupo.valores.length; i++) {
+                    await pool.request()
+                        .input('tipo', sql.NVarChar(50), grupo.tipo)
+                        .input('valor', sql.NVarChar(200), grupo.valores[i])
+                        .input('orden', sql.Int, i)
+                        .query('INSERT INTO catalogos (tipo, valor, orden) VALUES (@tipo, @valor, @orden)');
+                }
+                console.log(`Catalogo "${grupo.tipo}" sembrado con ${grupo.valores.length} valores.`);
+            } else {
+                console.log(`Catalogo "${grupo.tipo}" ya tiene datos. Se omite siembra.`);
+            }
+        }
+
+        // Create/Update spCatalogos
+        console.log('Creating/Updating Stored Procedure spCatalogos...');
+        await pool.request().query(`
+      CREATE OR ALTER PROCEDURE spCatalogos
+          @ACCION VARCHAR(50),
+          @DATA_JSON NVARCHAR(MAX) = NULL
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+
+          DECLARE @tipo NVARCHAR(50) = NULL;
+
+          IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
+          BEGIN
+              SET @tipo = JSON_VALUE(@DATA_JSON, '$.tipo');
+          END
+
+          IF @ACCION = 'SELECT_BY_TIPO'
+          BEGIN
+              SELECT (
+                  SELECT valor
+                  FROM catalogos
+                  WHERE tipo = @tipo AND activo = 1
+                  ORDER BY orden ASC, valor ASC
+                  FOR JSON PATH
+              ) AS DATOS;
+          END
+      END;
+    `);
+        console.log('Procedure "spCatalogos" created/updated.');
+
         // 4. Create/Update spPerfilesCargo
         console.log('Creating/Updating Stored Procedure spPerfilesCargo...');
         await pool.request().query(`
