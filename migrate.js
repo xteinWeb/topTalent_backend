@@ -85,6 +85,8 @@ async function migrate() {
           perfil_completo_json NVARCHAR(MAX) NULL,
           hv_archivo_nombre NVARCHAR(250) NULL,
           hv_archivo_ruta NVARCHAR(MAX) NULL,
+          codigo_verificacion NVARCHAR(10) NULL,
+          verificado BIT DEFAULT 0 NOT NULL,
           fecha_creacion DATETIME2 DEFAULT GETDATE(),
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
         );
@@ -92,7 +94,18 @@ async function migrate() {
             await pool.request().query(createCandidatosQuery);
             console.log('Table "candidatos" created successfully.');
         } else {
-            console.log('Table "candidatos" already exists.');
+            console.log('Table "candidatos" already exists. Verifying columns...');
+            const alterCandidatosColsQuery = `
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'codigo_verificacion')
+                BEGIN
+                    ALTER TABLE candidatos ADD codigo_verificacion NVARCHAR(10) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'verificado')
+                BEGIN
+                    ALTER TABLE candidatos ADD verificado BIT DEFAULT 0 NOT NULL;
+                END
+            `;
+            await pool.request().query(alterCandidatosColsQuery);
         }
 
         // 3. Create postulaciones table if not exists
@@ -107,17 +120,7 @@ async function migrate() {
         CREATE TABLE postulaciones (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
           vacante_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES vacantes(id) ON DELETE CASCADE,
-          candidato_id UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES candidatos(id) ON DELETE SET NULL,
-          nombre_completo NVARCHAR(250) NOT NULL,
-          correo NVARCHAR(250) NOT NULL,
-          telefono NVARCHAR(50),
-          perfil_profesional NVARCHAR(MAX) NOT NULL,
-          experiencias_json NVARCHAR(MAX) NOT NULL,
-          estudios_json NVARCHAR(MAX) NOT NULL,
-          idiomas_json NVARCHAR(MAX) NOT NULL,
-          habilidades_json NVARCHAR(MAX) NOT NULL,
-          hv_archivo_nombre NVARCHAR(250),
-          hv_archivo_ruta NVARCHAR(MAX),
+          candidato_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES candidatos(id) ON DELETE CASCADE,
           fecha_postulacion DATETIME2 DEFAULT GETDATE(),
           respuesta_ia NVARCHAR(MAX),
           estado_ia NVARCHAR(MAX)
@@ -126,14 +129,80 @@ async function migrate() {
             await pool.request().query(createPostulacionesQuery);
             console.log('Table "postulaciones" created successfully.');
         } else {
-            console.log('Table "postulaciones" already exists. Verifying columns...');
-            const addColsPostulacionesQuery = `
-                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'candidato_id')
+            console.log('Table "postulaciones" already exists. Verifying columns and constraints...');
+            const alterPostulacionesQuery = `
+                -- Drop redundant columns if they exist
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'nombre_completo')
                 BEGIN
-                    ALTER TABLE postulaciones ADD candidato_id UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES candidatos(id) ON DELETE SET NULL;
+                    ALTER TABLE postulaciones DROP COLUMN nombre_completo;
                 END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'correo')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN correo;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'telefono')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN telefono;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'perfil_profesional')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN perfil_profesional;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'experiencias_json')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN experiencias_json;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'estudios_json')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN estudios_json;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'idiomas_json')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN idiomas_json;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'habilidades_json')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN habilidades_json;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'hv_archivo_nombre')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN hv_archivo_nombre;
+                END
+                IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'hv_archivo_ruta')
+                BEGIN
+                    ALTER TABLE postulaciones DROP COLUMN hv_archivo_ruta;
+                END
+
+                -- Ensure candidato_id exists, drop old constraint, add new NOT NULL with CASCADE
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'candidato_id')
+                BEGIN
+                    ALTER TABLE postulaciones ADD candidato_id UNIQUEIDENTIFIER NULL;
+                END
+
+                -- Delete orphan records if any
+                DELETE FROM postulaciones WHERE candidato_id IS NULL;
+
+                -- Find and drop existing foreign key on candidato_id if it exists
+                DECLARE @ConstraintName NVARCHAR(200) = NULL;
+                SELECT @ConstraintName = f.name
+                FROM sys.foreign_keys AS f
+                INNER JOIN sys.foreign_key_columns AS fc ON f.object_id = fc.constraint_object_id
+                INNER JOIN sys.columns AS c ON fc.parent_object_id = c.object_id AND fc.parent_column_id = c.column_id
+                WHERE f.parent_object_id = OBJECT_ID('postulaciones') AND c.name = 'candidato_id';
+
+                IF @ConstraintName IS NOT NULL
+                BEGIN
+                    DECLARE @DropSql NVARCHAR(MAX) = 'ALTER TABLE postulaciones DROP CONSTRAINT ' + @ConstraintName;
+                    EXEC sp_executesql @DropSql;
+                END
+
+                -- Alter column to NOT NULL
+                ALTER TABLE postulaciones ALTER COLUMN candidato_id UNIQUEIDENTIFIER NOT NULL;
+
+                -- Add new Foreign Key with CASCADE
+                ALTER TABLE postulaciones ADD CONSTRAINT FK_postulaciones_candidatos FOREIGN KEY (candidato_id) REFERENCES candidatos(id) ON DELETE CASCADE;
             `;
-            await pool.request().query(addColsPostulacionesQuery);
+            await pool.request().query(alterPostulacionesQuery);
         }
 
         // 4. Create/Update spPerfilesCargo
@@ -376,43 +445,12 @@ async function migrate() {
 
           DECLARE @id UNIQUEIDENTIFIER = NULL;
           DECLARE @vacante_id UNIQUEIDENTIFIER = NULL;
-          DECLARE @nombre_completo NVARCHAR(250) = NULL;
-          DECLARE @correo NVARCHAR(250) = NULL;
-          DECLARE @telefono NVARCHAR(50) = NULL;
-          DECLARE @perfil_profesional NVARCHAR(MAX) = NULL;
-          DECLARE @experiencias_json NVARCHAR(MAX) = NULL;
-          DECLARE @estudios_json NVARCHAR(MAX) = NULL;
-          DECLARE @idiomas_json NVARCHAR(MAX) = NULL;
-          DECLARE @habilidades_json NVARCHAR(MAX) = NULL;
-          DECLARE @hv_archivo_nombre NVARCHAR(250) = NULL;
-          DECLARE @hv_archivo_ruta NVARCHAR(MAX) = NULL;
           DECLARE @candidato_id UNIQUEIDENTIFIER = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
               SET @vacante_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.vacante_id') AS UNIQUEIDENTIFIER);
-              SET @nombre_completo = JSON_VALUE(@DATA_JSON, '$.nombre_completo');
-              SET @correo = JSON_VALUE(@DATA_JSON, '$.correo');
-              SET @telefono = JSON_VALUE(@DATA_JSON, '$.telefono');
-              
-              SET @perfil_profesional = JSON_QUERY(@DATA_JSON, '$.perfil_profesional');
-              IF @perfil_profesional IS NULL SET @perfil_profesional = JSON_VALUE(@DATA_JSON, '$.perfil_profesional');
-              
-              SET @experiencias_json = JSON_QUERY(@DATA_JSON, '$.experiencias_json');
-              IF @experiencias_json IS NULL SET @experiencias_json = JSON_VALUE(@DATA_JSON, '$.experiencias_json');
-
-              SET @estudios_json = JSON_QUERY(@DATA_JSON, '$.estudios_json');
-              IF @estudios_json IS NULL SET @estudios_json = JSON_VALUE(@DATA_JSON, '$.estudios_json');
-
-              SET @idiomas_json = JSON_QUERY(@DATA_JSON, '$.idiomas_json');
-              IF @idiomas_json IS NULL SET @idiomas_json = JSON_VALUE(@DATA_JSON, '$.idiomas_json');
-
-              SET @habilidades_json = JSON_QUERY(@DATA_JSON, '$.habilidades_json');
-              IF @habilidades_json IS NULL SET @habilidades_json = JSON_VALUE(@DATA_JSON, '$.habilidades_json');
-
-              SET @hv_archivo_nombre = JSON_VALUE(@DATA_JSON, '$.hv_archivo_nombre');
-              SET @hv_archivo_ruta = JSON_VALUE(@DATA_JSON, '$.hv_archivo_ruta');
               SET @candidato_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.candidato_id') AS UNIQUEIDENTIFIER);
           END
 
@@ -424,22 +462,22 @@ async function migrate() {
                       p.vacante_id,
                       p.candidato_id,
                       v.titulo AS vacante_titulo,
-                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), p.nombre_completo) AS nombre_completo, 
-                      COALESCE(c.email, p.correo) AS correo, 
-                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.telefono'), p.telefono) AS telefono, 
-                      JSON_QUERY(COALESCE(c.perfil_completo_json, p.perfil_profesional)) AS perfil_profesional, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), p.experiencias_json)) AS experiencias_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), p.estudios_json)) AS estudios_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), p.idiomas_json)) AS idiomas_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), p.habilidades_json)) AS habilidades_json, 
-                      COALESCE(c.hv_archivo_nombre, p.hv_archivo_nombre) AS hv_archivo_nombre, 
-                      COALESCE(c.hv_archivo_ruta, p.hv_archivo_ruta) AS hv_archivo_ruta, 
+                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), '') AS nombre_completo, 
+                      c.email AS correo, 
+                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.telefono'), '') AS telefono, 
+                      JSON_QUERY('{"titulo":"Postulación Detallada","resumen":"Perfil en base de datos"}') AS perfil_profesional, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), '[]')) AS experiencias_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), '[]')) AS estudios_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), '[]')) AS idiomas_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json, 
+                      c.hv_archivo_nombre AS hv_archivo_nombre, 
+                      c.hv_archivo_ruta AS hv_archivo_ruta, 
                       p.fecha_postulacion,
                       CASE WHEN ISJSON(p.respuesta_ia) = 1 THEN JSON_QUERY(p.respuesta_ia) ELSE NULL END AS respuesta_ia,
                       p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
-                  LEFT JOIN candidatos c ON p.candidato_id = c.id
+                  INNER JOIN candidatos c ON p.candidato_id = c.id
                   ORDER BY p.fecha_postulacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -452,22 +490,22 @@ async function migrate() {
                       p.vacante_id,
                       p.candidato_id,
                       v.titulo AS vacante_titulo,
-                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), p.nombre_completo) AS nombre_completo, 
-                      COALESCE(c.email, p.correo) AS correo, 
-                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.telefono'), p.telefono) AS telefono, 
-                      JSON_QUERY(COALESCE(c.perfil_completo_json, p.perfil_profesional)) AS perfil_profesional, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), p.experiencias_json)) AS experiencias_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), p.estudios_json)) AS estudios_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), p.idiomas_json)) AS idiomas_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), p.habilidades_json)) AS habilidades_json, 
-                      COALESCE(c.hv_archivo_nombre, p.hv_archivo_nombre) AS hv_archivo_nombre, 
-                      COALESCE(c.hv_archivo_ruta, p.hv_archivo_ruta) AS hv_archivo_ruta, 
+                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), '') AS nombre_completo, 
+                      c.email AS correo, 
+                      COALESCE(JSON_VALUE(c.perfil_completo_json, '$.telefono'), '') AS telefono, 
+                      JSON_QUERY('{"titulo":"Postulación Detallada","resumen":"Perfil en base de datos"}') AS perfil_profesional, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), '[]')) AS experiencias_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), '[]')) AS estudios_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), '[]')) AS idiomas_json, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json, 
+                      c.hv_archivo_nombre AS hv_archivo_nombre, 
+                      c.hv_archivo_ruta AS hv_archivo_ruta, 
                       p.fecha_postulacion,
                       CASE WHEN ISJSON(p.respuesta_ia) = 1 THEN JSON_QUERY(p.respuesta_ia) ELSE NULL END AS respuesta_ia,
                       p.estado_ia
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
-                  LEFT JOIN candidatos c ON p.candidato_id = c.id
+                  INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE p.vacante_id = @vacante_id
                   ORDER BY p.fecha_postulacion DESC
                   FOR JSON PATH
@@ -475,45 +513,25 @@ async function migrate() {
           END
           ELSE IF @ACCION = 'INSERT'
           BEGIN
-              IF EXISTS (SELECT 1 FROM postulaciones WHERE vacante_id = @vacante_id AND correo = @correo)
+              IF EXISTS (SELECT 1 FROM postulaciones WHERE vacante_id = @vacante_id AND candidato_id = @candidato_id)
               BEGIN
-                  THROW 50000, 'Ya te has postulado a esta vacante con este correo electrónico.', 1;
+                  THROW 50000, 'Ya te has postulado a esta vacante.', 1;
               END
 
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              -- Si se trata de un candidato registrado, insertamos valores nulos en los campos redundantes
-              IF @candidato_id IS NOT NULL
-              BEGIN
-                  INSERT INTO postulaciones (
-                      id, vacante_id, candidato_id, nombre_completo, correo, telefono, 
-                      perfil_profesional, experiencias_json, estudios_json, 
-                      idiomas_json, habilidades_json, hv_archivo_nombre, hv_archivo_ruta
-                  ) 
-                  VALUES (
-                      @InsertedID, @vacante_id, @candidato_id, '', @correo, NULL, 
-                      '{}', '[]', '[]', 
-                      '[]', '{}', NULL, NULL
-                  );
-              END
-              ELSE
-              BEGIN
-                  INSERT INTO postulaciones (
-                      id, vacante_id, candidato_id, nombre_completo, correo, telefono, 
-                      perfil_profesional, experiencias_json, estudios_json, 
-                      idiomas_json, habilidades_json, hv_archivo_nombre, hv_archivo_ruta
-                  ) 
-                  VALUES (
-                      @InsertedID, @vacante_id, NULL, @nombre_completo, @correo, @telefono, 
-                      @perfil_profesional, @experiencias_json, @estudios_json, 
-                      @idiomas_json, @habilidades_json, @hv_archivo_nombre, @hv_archivo_ruta
-                  );
-              END
+              INSERT INTO postulaciones (
+                  id, vacante_id, candidato_id
+              ) 
+              VALUES (
+                  @InsertedID, @vacante_id, @candidato_id
+              );
 
               SELECT (
-                  SELECT id, vacante_id, nombre_completo, correo 
-                  FROM postulaciones 
-                  WHERE id = @InsertedID
+                  SELECT p.id, p.vacante_id, p.candidato_id, c.email AS correo
+                  FROM postulaciones p
+                  INNER JOIN candidatos c ON p.candidato_id = c.id
+                  WHERE p.id = @InsertedID
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
           END
@@ -537,6 +555,8 @@ async function migrate() {
           DECLARE @perfil_completo_json NVARCHAR(MAX) = NULL;
           DECLARE @hv_archivo_nombre NVARCHAR(250) = NULL;
           DECLARE @hv_archivo_ruta NVARCHAR(MAX) = NULL;
+          DECLARE @codigo_verificacion NVARCHAR(10) = NULL;
+          DECLARE @verificado BIT = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -547,12 +567,14 @@ async function migrate() {
               IF @perfil_completo_json IS NULL SET @perfil_completo_json = JSON_VALUE(@DATA_JSON, '$.perfil_completo_json');
               SET @hv_archivo_nombre = JSON_VALUE(@DATA_JSON, '$.hv_archivo_nombre');
               SET @hv_archivo_ruta = JSON_VALUE(@DATA_JSON, '$.hv_archivo_ruta');
+              SET @codigo_verificacion = JSON_VALUE(@DATA_JSON, '$.codigo_verificacion');
+              SET @verificado = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.verificado') AS BIT);
           END
 
           IF @ACCION = 'SELECT_BY_EMAIL'
           BEGIN
               SELECT (
-                  SELECT id, email, password_hash, 
+                  SELECT id, email, password_hash, verificado, codigo_verificacion,
                          CASE WHEN ISJSON(perfil_completo_json) = 1 THEN JSON_QUERY(perfil_completo_json) ELSE NULL END AS perfil_completo_json,
                          hv_archivo_nombre, hv_archivo_ruta
                   FROM candidatos
@@ -563,7 +585,7 @@ async function migrate() {
           ELSE IF @ACCION = 'SELECT_BY_ID'
           BEGIN
               SELECT (
-                  SELECT id, email, 
+                  SELECT id, email, verificado, codigo_verificacion,
                          CASE WHEN ISJSON(perfil_completo_json) = 1 THEN JSON_QUERY(perfil_completo_json) ELSE NULL END AS perfil_completo_json,
                          hv_archivo_nombre, hv_archivo_ruta
                   FROM candidatos
@@ -580,11 +602,11 @@ async function migrate() {
 
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO candidatos (id, email, password_hash)
-              VALUES (@InsertedID, @email, @password_hash);
+              INSERT INTO candidatos (id, email, password_hash, codigo_verificacion, verificado)
+              VALUES (@InsertedID, @email, @password_hash, @codigo_verificacion, ISNULL(@verificado, 0));
 
               SELECT (
-                  SELECT id, email
+                  SELECT id, email, codigo_verificacion, verificado
                   FROM candidatos
                   WHERE id = @InsertedID
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
@@ -600,6 +622,28 @@ async function migrate() {
               WHERE id = @id;
 
               SELECT '{"message": "Perfil actualizado exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'VERIFICAR_CORREO'
+          BEGIN
+              IF EXISTS (SELECT 1 FROM candidatos WHERE email = @email AND codigo_verificacion = @codigo_verificacion)
+              BEGIN
+                  UPDATE candidatos
+                  SET verificado = 1,
+                      codigo_verificacion = NULL,
+                      fecha_actualizacion = GETDATE()
+                  WHERE email = @email;
+
+                  SELECT (
+                      SELECT id, email, verificado
+                      FROM candidatos
+                      WHERE email = @email
+                      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                  ) AS DATOS;
+              END
+              ELSE
+              BEGIN
+                  THROW 50000, 'Código de verificación inválido.', 1;
+              END
           END
       END;
     `);

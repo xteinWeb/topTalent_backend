@@ -6,6 +6,7 @@ const candidatosController = require('../controllers/candidatosController');
 
 router.post('/registro', candidatosController.registro);
 router.post('/login', candidatosController.login);
+router.post('/verificar', candidatosController.verificar);
 router.get('/perfil', candidatosController.getPerfil);
 router.put('/perfil', candidatosController.updatePerfil);
 

@@ -38,6 +38,7 @@ exports.uploadMiddleware = upload;
 
 // POST create a new job application
 exports.create = async (req, res) => {
+  let uploadedFileRuta = req.file ? req.file.path : null;
   try {
     const { 
       vacante_id, 
@@ -53,9 +54,8 @@ exports.create = async (req, res) => {
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo) {
-      // Clean up file if uploaded
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
       }
       return res.status(400).json({ error: 'Faltan campos obligatorios: vacante_id, nombre_completo, correo' });
     }
@@ -63,54 +63,112 @@ exports.create = async (req, res) => {
     const hv_archivo_nombre = req.file ? req.file.originalname : null;
     const hv_archivo_ruta = req.file ? req.file.filename : null;
 
-    const dataJson = {
-      vacante_id,
+    const pool = await poolPromise;
+    let finalCandidatoId = candidato_id;
+    if (finalCandidatoId === 'null' || finalCandidatoId === 'undefined' || !finalCandidatoId) {
+      finalCandidatoId = null;
+    }
+
+    if (!finalCandidatoId) {
+      // Find candidate by email
+      const checkResult = await pool.request()
+        .input('ACCION', sql.VarChar(50), 'SELECT_BY_EMAIL')
+        .input('DATA_JSON', sql.VarChar, JSON.stringify({ email: correo }))
+        .execute('spCandidatos');
+      
+      let parsedCandidate = null;
+      try {
+        parsedCandidate = checkResult.recordset[0]["DATOS"] ? JSON.parse(checkResult.recordset[0]["DATOS"]) : null;
+      } catch (e) {
+        parsedCandidate = checkResult.recordset[0]["DATOS"];
+      }
+
+      if (parsedCandidate) {
+        finalCandidatoId = parsedCandidate.id;
+      } else {
+        // Create new candidate
+        const newPassword = 'AutoRegister-' + Math.random().toString(36).substring(2, 10);
+        const insertResult = await pool.request()
+          .input('ACCION', sql.VarChar(50), 'INSERT')
+          .input('DATA_JSON', sql.VarChar, JSON.stringify({ email: correo, password_hash: newPassword }))
+          .execute('spCandidatos');
+        
+        let parsedNewCandidate = null;
+        try {
+          parsedNewCandidate = insertResult.recordset[0]["DATOS"] ? JSON.parse(insertResult.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedNewCandidate = insertResult.recordset[0]["DATOS"];
+        }
+
+        if (parsedNewCandidate) {
+          finalCandidatoId = parsedNewCandidate.id;
+        } else {
+          throw new Error('No se pudo crear el registro del candidato en la base de datos.');
+        }
+      }
+    }
+
+    // Parse JSON fields
+    const parsedExp = typeof experiencias_json === 'string' ? JSON.parse(experiencias_json) : experiencias_json;
+    const parsedEst = typeof estudios_json === 'string' ? JSON.parse(estudios_json) : estudios_json;
+    const parsedIdi = typeof idiomas_json === 'string' ? JSON.parse(idiomas_json) : idiomas_json;
+    const parsedHab = typeof habilidades_json === 'string' ? JSON.parse(habilidades_json) : habilidades_json;
+
+    const cedulaVal = req.body.cedula || '';
+    const fechaNacVal = req.body.fecha_nacimiento || '';
+
+    // Construct unified profile payload for candidates table
+    const perfilCompletoObj = {
       nombre_completo,
-      correo,
       telefono,
-      perfil_profesional: typeof perfil_profesional === 'string' ? JSON.parse(perfil_profesional) : perfil_profesional,
-      experiencias_json: typeof experiencias_json === 'string' ? JSON.parse(experiencias_json) : experiencias_json,
-      estudios_json: typeof estudios_json === 'string' ? JSON.parse(estudios_json) : estudios_json,
-      idiomas_json: typeof idiomas_json === 'string' ? JSON.parse(idiomas_json) : idiomas_json,
-      habilidades_json: typeof habilidades_json === 'string' ? JSON.parse(habilidades_json) : habilidades_json,
-      hv_archivo_nombre,
-      hv_archivo_ruta,
-      candidato_id: candidato_id || null
+      cedula: cedulaVal,
+      fecha_nacimiento: fechaNacVal,
+      tieneEducacionFormal: parsedEst && parsedEst.length > 0 ? 'Si' : 'No',
+      tieneEducacionInformal: parsedEst && parsedEst.some(e => e.nivel && e.nivel.includes('Cursos y Certificaciones')) ? 'Si' : 'No',
+      estudios: parsedEst || [],
+      experiencias: parsedExp || [],
+      capacitaciones: [],
+      idiomas: parsedIdi || [],
+      habilidades: parsedHab || { tecnicas: [], interpersonales: [], otros: [] }
     };
 
-    const pool = await poolPromise;
-    pool.request()
-      .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify(dataJson))
-      .execute('spPostulaciones')
-      .then(function (recordSet) {
-        let parsedData = null;
-        try {
-          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
-        } catch (e) {
-          parsedData = recordSet.recordset[0]["DATOS"];
-        }
+    // Update unified profile in candidates table
+    await pool.request()
+      .input('ACCION', sql.VarChar(50), 'UPDATE_PERFIL')
+      .input('DATA_JSON', sql.NVarChar, JSON.stringify({
+        id: finalCandidatoId,
+        perfil_completo_json: JSON.stringify(perfilCompletoObj),
+        hv_archivo_nombre: hv_archivo_nombre,
+        hv_archivo_ruta: hv_archivo_ruta
+      }))
+      .execute('spCandidatos');
 
-        res.status(201).json({
-          message: 'Postulación enviada exitosamente',
-          data: parsedData
-        });
-      })
-      .catch((err) => {
-        console.error(err);
-        // Clean up file on DB error
-        if (req.file) {
-          fs.unlinkSync(req.file.path);
-        }
-        res.status(500).json({ error: err.message });
-      });
+    // Create postulation record referencing candidato_id
+    const postulationResult = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'INSERT')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        vacante_id,
+        candidato_id: finalCandidatoId
+      }))
+      .execute('spPostulaciones');
+
+    let parsedData = null;
+    try {
+      parsedData = postulationResult.recordset[0]["DATOS"] ? JSON.parse(postulationResult.recordset[0]["DATOS"]) : null;
+    } catch (e) {
+      parsedData = postulationResult.recordset[0]["DATOS"];
+    }
+
+    res.status(201).json({
+      message: 'Postulación enviada exitosamente',
+      data: parsedData
+    });
 
   } catch (err) {
-    // Clean up file on general catch error
-    if (req.file) {
-      try { fs.unlinkSync(req.file.path); } catch (e) {}
+    if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+      try { fs.unlinkSync(uploadedFileRuta); } catch (e) {}
     }
-    res.status(400).json({ message: err.message });
+    res.status(400).json({ error: err.message });
   }
 };
 

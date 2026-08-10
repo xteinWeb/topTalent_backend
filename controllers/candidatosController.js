@@ -1,4 +1,6 @@
 const { poolPromise, sql } = require('../config/db');
+const bcrypt = require('bcryptjs');
+const { sendVerificationEmail } = require('../utils/mailer');
 
 // Registro de Candidato
 exports.registro = async (req, res) => {
@@ -9,27 +11,37 @@ exports.registro = async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios: email y password' });
     }
 
+    // Hash the password
+    const passwordHash = await bcrypt.hash(password, 10);
+    // Generate a 6-digit verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    console.log(`=========================================`);
+    console.log(`CÓDIGO DE VERIFICACIÓN ENVIADO A: ${email} -> ${verificationCode}`);
+    console.log(`=========================================`);
+
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ email, password_hash: password })) // En este mock/desarrollo local usamos la contraseña directamente
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+        email, 
+        password_hash: passwordHash,
+        codigo_verificacion: verificationCode,
+        verificado: 0
+      }))
       .execute('spCandidatos')
-      .then(function (recordSet) {
-        let parsedData = null;
+      .then(async function (recordSet) {
         try {
-          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
-        } catch (e) {
-          parsedData = recordSet.recordset[0]["DATOS"];
+          await sendVerificationEmail(email, verificationCode);
+          console.log(`Correo de verificación enviado exitosamente a: ${email}`);
+        } catch (mailErr) {
+          console.error('Error al enviar el correo de verificación:', mailErr);
         }
-
+        
         res.status(201).json({
           success: true,
-          token: `candidato-mock-token-${parsedData.id}`,
-          user: {
-            id: parsedData.id,
-            email: parsedData.email,
-            role: 'Candidato'
-          }
+          message: 'Código de verificación enviado al correo.',
+          email: email
         });
       })
       .catch((err) => {
@@ -55,7 +67,7 @@ exports.login = async (req, res) => {
       .input('ACCION', sql.VarChar(50), 'SELECT_BY_EMAIL')
       .input('DATA_JSON', sql.VarChar, JSON.stringify({ email }))
       .execute('spCandidatos')
-      .then(function (recordSet) {
+      .then(async function (recordSet) {
         let parsedData = null;
         try {
           parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
@@ -63,8 +75,23 @@ exports.login = async (req, res) => {
           parsedData = recordSet.recordset[0]["DATOS"];
         }
 
-        if (!parsedData || parsedData.password_hash !== password) {
+        if (!parsedData) {
           return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+        }
+
+        // Compare password hash
+        const isMatch = await bcrypt.compare(password, parsedData.password_hash);
+        if (!isMatch) {
+          return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+        }
+
+        // Check if verified
+        if (parsedData.verificado !== true && parsedData.verificado !== 1) {
+          return res.status(403).json({ 
+            error: 'Debes verificar tu correo electrónico antes de iniciar sesión.',
+            unverified: true,
+            email: parsedData.email
+          });
         }
 
         res.json({
@@ -80,6 +107,52 @@ exports.login = async (req, res) => {
       .catch((err) => {
         console.error(err);
         res.status(500).json({ error: err.message });
+      });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// Verificar Código de Candidato
+exports.verificar = async (req, res) => {
+  try {
+    const { email, codigo } = req.body;
+
+    if (!email || !codigo) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios: email y codigo' });
+    }
+
+    const pool = await poolPromise;
+    pool.request()
+      .input('ACCION', sql.VarChar(50), 'VERIFICAR_CORREO')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ email, codigo_verificacion: codigo }))
+      .execute('spCandidatos')
+      .then(function (recordSet) {
+        let parsedData = null;
+        try {
+          parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          parsedData = recordSet.recordset[0]["DATOS"];
+        }
+
+        if (!parsedData) {
+          return res.status(400).json({ error: 'Código de verificación inválido.' });
+        }
+
+        res.json({
+          success: true,
+          message: 'Cuenta verificada correctamente',
+          token: `candidato-mock-token-${parsedData.id}`,
+          user: {
+            id: parsedData.id,
+            email: parsedData.email,
+            role: 'Candidato'
+          }
+        });
+      })
+      .catch((err) => {
+        console.error(err);
+        res.status(400).json({ error: err.originalError ? err.originalError.info.message : err.message });
       });
   } catch (err) {
     res.status(400).json({ error: err.message });
