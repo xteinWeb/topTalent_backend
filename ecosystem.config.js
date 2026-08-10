@@ -18,6 +18,10 @@ module.exports = {
         DB_ENCRYPT: 'false',
         FRONTEND_URL: '',
         N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
+        SMTP_HOST: 'smtp.gmail.com',
+        SMTP_PORT: 465,
+        SMTP_USER: 'soporte@artdecon.com',
+        SMTP_PASS: 'xfmwryzvhyqnocvm',
       },
 
       // Variables de entorno para Desarrollo (--env development)
@@ -32,6 +36,10 @@ module.exports = {
         DB_ENCRYPT: 'false',
         FRONTEND_URL: 'http://localhost:4200',
         N8N_WEBHOOK_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
+        SMTP_HOST: 'smtp.gmail.com',
+        SMTP_PORT: 465,
+        SMTP_USER: 'soporte@artdecon.com',
+        SMTP_PASS: 'xfmwryzvhyqnocvm',
         watch: true // Activa watch en desarrollo para auto-recarga
       }
     }
