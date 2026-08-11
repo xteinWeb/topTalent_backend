@@ -3,6 +3,31 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+// Helper function to notify n8n about a new job application
+async function notificarPostulacionN8N(payload) {
+  const webhookUrl = process.env.N8N_WEBHOOK_POSTULACIONES_URL;
+  if (!webhookUrl) {
+    console.warn('N8N_WEBHOOK_POSTULACIONES_URL not configured. Skipping postulacion notification.');
+    return;
+  }
+  try {
+    console.log(`Calling n8n webhook for postulacion: ${webhookUrl}`);
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`n8n response error: ${response.status} ${response.statusText}`);
+    }
+  } catch (error) {
+    console.error('Error calling n8n webhook for postulacion:', error);
+  }
+}
+
 // Configure Multer storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -163,6 +188,55 @@ exports.create = async (req, res) => {
       message: 'Postulación enviada exitosamente',
       data: parsedData
     });
+
+    // Notify n8n with the candidate's profile and resume data (fire-and-forget, does not block the response)
+    (async () => {
+      try {
+        const candidatoResult = await pool.request()
+          .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+          .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: finalCandidatoId }))
+          .execute('spCandidatos');
+
+        let candidatoActual = null;
+        try {
+          candidatoActual = candidatoResult.recordset[0]["DATOS"] ? JSON.parse(candidatoResult.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          candidatoActual = candidatoResult.recordset[0]["DATOS"];
+        }
+
+        const vacanteResult = await pool.request()
+          .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+          .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: vacante_id }))
+          .execute('spVacantes');
+
+        let vacanteActual = null;
+        try {
+          vacanteActual = vacanteResult.recordset[0]["DATOS"] ? JSON.parse(vacanteResult.recordset[0]["DATOS"]) : null;
+        } catch (e) {
+          vacanteActual = vacanteResult.recordset[0]["DATOS"];
+        }
+
+        await notificarPostulacionN8N({
+          evento: 'nueva_postulacion',
+          postulacion_id: parsedData ? parsedData.id : null,
+          vacante: {
+            id: vacante_id,
+            titulo: vacanteActual ? vacanteActual.titulo : null
+          },
+          candidato: {
+            id: finalCandidatoId,
+            email: correo,
+            perfil_completo_json: candidatoActual ? candidatoActual.perfil_completo_json : perfilCompletoObj,
+            hv_archivo_nombre: candidatoActual ? candidatoActual.hv_archivo_nombre : hv_archivo_nombre,
+            hv_archivo_url: (candidatoActual && candidatoActual.hv_archivo_ruta)
+              ? `${req.protocol}://${req.get('host')}/api/postulaciones/download/${candidatoActual.hv_archivo_ruta}`
+              : null
+          }
+        });
+      } catch (notifyErr) {
+        console.error('Error preparando notificación de postulación a n8n:', notifyErr);
+      }
+    })();
 
   } catch (err) {
     if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {

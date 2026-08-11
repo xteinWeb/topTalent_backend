@@ -4,9 +4,9 @@ const { Packer } = require('docx');
 
 // Helper function to call n8n Webhook
 async function obtenerPreguntasN8N(area, cargo, perfil_json) {
-  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  const webhookUrl = process.env.N8N_WEBHOOK_PERFILES_URL;
   if (!webhookUrl) {
-    console.warn('N8N_WEBHOOK_URL not configured. Skipping questions generation.');
+    console.warn('N8N_WEBHOOK_PERFILES_URL not configured. Skipping questions generation.');
     return null;
   }
   try {

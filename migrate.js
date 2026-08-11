@@ -247,6 +247,33 @@ async function migrate() {
                 'Congreso',
                 'Certificación',
                 'Otro'
+            ]},
+            { tipo: 'INSTITUCION_EDUCATIVA', valores: [
+                'SENA (Servicio Nacional de Aprendizaje)',
+                'Universidad Nacional de Colombia',
+                'Universidad de Antioquia',
+                'Universidad del Valle',
+                'Universidad de los Andes',
+                'Pontificia Universidad Javeriana',
+                'Universidad EAFIT',
+                'Universidad Industrial de Santander (UIS)',
+                'Universidad del Norte',
+                'Universidad de Caldas',
+                'Universidad Tecnológica de Pereira',
+                'Universidad de Medellín',
+                'Universidad de la Sabana',
+                'Universidad Externado de Colombia',
+                'Universidad del Rosario',
+                'Politécnico Grancolombiano',
+                'Corporación Universitaria Minuto de Dios (UNIMINUTO)',
+                'Universidad Cooperativa de Colombia',
+                'Universidad Pedagógica y Tecnológica de Colombia (UPTC)',
+                'Universidad Distrital Francisco José de Caldas',
+                'Universidad Pontificia Bolivariana (UPB)',
+                'Universidad Santo Tomás',
+                'Universidad Libre',
+                'Universidad de Pamplona',
+                'Universidad de Córdoba'
             ]}
         ];
 
