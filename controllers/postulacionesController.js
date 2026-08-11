@@ -16,6 +16,7 @@ async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
     formData.append('postulacion_id', payload.postulacion_id || '');
     formData.append('id_vacante', payload.vacante ? payload.vacante.id : '');
     formData.append('titulo_vacante', payload.vacante ? payload.vacante.titulo : '');
+    formData.append('id_candidato', payload.candidato ? payload.candidato.id : '');
     formData.append('candidato', JSON.stringify(payload.candidato));
 
     if (archivoPath && fs.existsSync(archivoPath)) {
