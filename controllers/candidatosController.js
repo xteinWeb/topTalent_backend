@@ -1,6 +1,39 @@
 const { poolPromise, sql } = require('../config/db');
 const bcrypt = require('bcryptjs');
 const { sendVerificationEmail } = require('../utils/mailer');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure Multer storage for candidate resume uploads (perfil page)
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'cv-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const filetypes = /pdf|docx|doc/;
+    const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    if (extname) {
+      return cb(null, true);
+    }
+    cb(new Error('Solo se permiten archivos PDF, DOC o DOCX.'));
+  }
+}).single('hv_archivo');
+
+exports.uploadMiddleware = upload;
 
 // Registro de Candidato
 exports.registro = async (req, res) => {
@@ -200,13 +233,23 @@ exports.getPerfil = async (req, res) => {
 
 // Actualizar Perfil de Candidato
 exports.updatePerfil = async (req, res) => {
+  let uploadedFilePath = req.file ? req.file.path : null;
   try {
     const id = req.headers.authorization ? req.headers.authorization.replace('Bearer candidato-mock-token-', '') : null;
-    const { perfil_completo_json, hv_archivo_nombre, hv_archivo_ruta } = req.body;
 
     if (!id) {
+      if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
       return res.status(401).json({ error: 'No autorizado' });
     }
+
+    const perfil_completo_json = req.body.perfil_completo_json
+      ? (typeof req.body.perfil_completo_json === 'string' ? JSON.parse(req.body.perfil_completo_json) : req.body.perfil_completo_json)
+      : undefined;
+
+    // Only overwrite the resume file fields when a new file was actually uploaded;
+    // otherwise leave the candidate's existing file untouched.
+    const hv_archivo_nombre = req.file ? req.file.originalname : undefined;
+    const hv_archivo_ruta = req.file ? req.file.filename : undefined;
 
     const pool = await poolPromise;
     pool.request()
@@ -225,9 +268,11 @@ exports.updatePerfil = async (req, res) => {
       })
       .catch((err) => {
         console.error(err);
+        if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
         res.status(500).json({ error: err.message });
       });
   } catch (err) {
+    if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
     res.status(400).json({ error: err.message });
   }
 };
