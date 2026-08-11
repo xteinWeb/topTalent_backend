@@ -3,21 +3,31 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Helper function to notify n8n about a new job application
-async function notificarPostulacionN8N(payload) {
+// Helper function to notify n8n about a new job application, attaching the resume file as multipart/form-data
+async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
   const webhookUrl = process.env.N8N_WEBHOOK_POSTULACIONES_URL;
   if (!webhookUrl) {
     console.warn('N8N_WEBHOOK_POSTULACIONES_URL not configured. Skipping postulacion notification.');
     return;
   }
   try {
+    const formData = new FormData();
+    formData.append('evento', payload.evento);
+    formData.append('postulacion_id', payload.postulacion_id || '');
+    formData.append('vacante', JSON.stringify(payload.vacante));
+    formData.append('candidato', JSON.stringify(payload.candidato));
+
+    if (archivoPath && fs.existsSync(archivoPath)) {
+      const fileBuffer = fs.readFileSync(archivoPath);
+      formData.append('hv_archivo', new Blob([fileBuffer]), archivoNombre || path.basename(archivoPath));
+    } else {
+      console.warn('No se encontró el archivo de hoja de vida para adjuntar al webhook de n8n.');
+    }
+
     console.log(`Calling n8n webhook for postulacion: ${webhookUrl}`);
     const response = await fetch(webhookUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
+      body: formData
     });
 
     if (!response.ok) {
@@ -216,6 +226,10 @@ exports.create = async (req, res) => {
           vacanteActual = vacanteResult.recordset[0]["DATOS"];
         }
 
+        const hvArchivoNombreFinal = candidatoActual ? candidatoActual.hv_archivo_nombre : hv_archivo_nombre;
+        const hvArchivoRutaFinal = candidatoActual ? candidatoActual.hv_archivo_ruta : hv_archivo_ruta;
+        const hvArchivoPath = hvArchivoRutaFinal ? path.join(__dirname, '../uploads', hvArchivoRutaFinal) : null;
+
         await notificarPostulacionN8N({
           evento: 'nueva_postulacion',
           postulacion_id: parsedData ? parsedData.id : null,
@@ -227,12 +241,9 @@ exports.create = async (req, res) => {
             id: finalCandidatoId,
             email: correo,
             perfil_completo_json: candidatoActual ? candidatoActual.perfil_completo_json : perfilCompletoObj,
-            hv_archivo_nombre: candidatoActual ? candidatoActual.hv_archivo_nombre : hv_archivo_nombre,
-            hv_archivo_url: (candidatoActual && candidatoActual.hv_archivo_ruta)
-              ? `${req.protocol}://${req.get('host')}/api/postulaciones/download/${candidatoActual.hv_archivo_ruta}`
-              : null
+            hv_archivo_nombre: hvArchivoNombreFinal
           }
-        });
+        }, hvArchivoPath, hvArchivoNombreFinal);
       } catch (notifyErr) {
         console.error('Error preparando notificación de postulación a n8n:', notifyErr);
       }
