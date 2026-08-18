@@ -87,6 +87,9 @@ async function migrate() {
           hv_archivo_ruta NVARCHAR(MAX) NULL,
           codigo_verificacion NVARCHAR(10) NULL,
           verificado BIT DEFAULT 0 NOT NULL,
+          acepto_tratamiento_datos BIT DEFAULT 0 NOT NULL,
+          fecha_aceptacion_tratamiento_datos DATETIME2 NULL,
+          version_tratamiento_datos NVARCHAR(50) NULL,
           fecha_creacion DATETIME2 DEFAULT GETDATE(),
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
         );
@@ -103,6 +106,18 @@ async function migrate() {
                 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'verificado')
                 BEGIN
                     ALTER TABLE candidatos ADD verificado BIT DEFAULT 0 NOT NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'acepto_tratamiento_datos')
+                BEGIN
+                    ALTER TABLE candidatos ADD acepto_tratamiento_datos BIT DEFAULT 0 NOT NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'fecha_aceptacion_tratamiento_datos')
+                BEGIN
+                    ALTER TABLE candidatos ADD fecha_aceptacion_tratamiento_datos DATETIME2 NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'candidatos' AND COLUMN_NAME = 'version_tratamiento_datos')
+                BEGIN
+                    ALTER TABLE candidatos ADD version_tratamiento_datos NVARCHAR(50) NULL;
                 END
             `;
             await pool.request().query(alterCandidatosColsQuery);
@@ -690,6 +705,8 @@ async function migrate() {
           DECLARE @hv_archivo_ruta NVARCHAR(MAX) = NULL;
           DECLARE @codigo_verificacion NVARCHAR(10) = NULL;
           DECLARE @verificado BIT = NULL;
+          DECLARE @acepto_tratamiento_datos BIT = NULL;
+          DECLARE @version_tratamiento_datos NVARCHAR(50) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -702,6 +719,8 @@ async function migrate() {
               SET @hv_archivo_ruta = JSON_VALUE(@DATA_JSON, '$.hv_archivo_ruta');
               SET @codigo_verificacion = JSON_VALUE(@DATA_JSON, '$.codigo_verificacion');
               SET @verificado = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.verificado') AS BIT);
+              SET @acepto_tratamiento_datos = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.acepto_tratamiento_datos') AS BIT);
+              SET @version_tratamiento_datos = JSON_VALUE(@DATA_JSON, '$.version_tratamiento_datos');
           END
 
           IF @ACCION = 'SELECT_BY_EMAIL'
@@ -720,7 +739,8 @@ async function migrate() {
               SELECT (
                   SELECT id, email, verificado, codigo_verificacion,
                          CASE WHEN ISJSON(perfil_completo_json) = 1 THEN JSON_QUERY(perfil_completo_json) ELSE NULL END AS perfil_completo_json,
-                         hv_archivo_nombre, hv_archivo_ruta
+                         hv_archivo_nombre, hv_archivo_ruta,
+                         acepto_tratamiento_datos, fecha_aceptacion_tratamiento_datos, version_tratamiento_datos
                   FROM candidatos
                   WHERE id = @id
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
@@ -735,8 +755,16 @@ async function migrate() {
 
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO candidatos (id, email, password_hash, codigo_verificacion, verificado)
-              VALUES (@InsertedID, @email, @password_hash, @codigo_verificacion, ISNULL(@verificado, 0));
+              INSERT INTO candidatos (
+                  id, email, password_hash, codigo_verificacion, verificado,
+                  acepto_tratamiento_datos, fecha_aceptacion_tratamiento_datos, version_tratamiento_datos
+              )
+              VALUES (
+                  @InsertedID, @email, @password_hash, @codigo_verificacion, ISNULL(@verificado, 0),
+                  ISNULL(@acepto_tratamiento_datos, 0),
+                  CASE WHEN @acepto_tratamiento_datos = 1 THEN GETDATE() ELSE NULL END,
+                  CASE WHEN @acepto_tratamiento_datos = 1 THEN @version_tratamiento_datos ELSE NULL END
+              );
 
               SELECT (
                   SELECT id, email, codigo_verificacion, verificado
@@ -751,6 +779,9 @@ async function migrate() {
               SET perfil_completo_json = @perfil_completo_json,
                   hv_archivo_nombre = ISNULL(@hv_archivo_nombre, hv_archivo_nombre),
                   hv_archivo_ruta = ISNULL(@hv_archivo_ruta, hv_archivo_ruta),
+                  acepto_tratamiento_datos = CASE WHEN @acepto_tratamiento_datos = 1 THEN 1 ELSE acepto_tratamiento_datos END,
+                  fecha_aceptacion_tratamiento_datos = CASE WHEN @acepto_tratamiento_datos = 1 AND acepto_tratamiento_datos = 0 THEN GETDATE() ELSE fecha_aceptacion_tratamiento_datos END,
+                  version_tratamiento_datos = CASE WHEN @acepto_tratamiento_datos = 1 AND acepto_tratamiento_datos = 0 THEN @version_tratamiento_datos ELSE version_tratamiento_datos END,
                   fecha_actualizacion = GETDATE()
               WHERE id = @id;
 

@@ -2,6 +2,7 @@ const { poolPromise, sql } = require('../config/db');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
 
 // Helper function to notify n8n about a new job application, attaching the resume file as multipart/form-data
 async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
@@ -89,7 +90,8 @@ exports.create = async (req, res) => {
       idiomas_json,
       habilidades_json,
       candidato_id,
-      preguntas_respondidas_json
+      preguntas_respondidas_json,
+      acepto_tratamiento_datos
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo) {
@@ -147,6 +149,29 @@ exports.create = async (req, res) => {
       }
     }
 
+    // Check whether the candidate already accepted the data treatment authorization on a previous occasion
+    const candidatoActualResult = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: finalCandidatoId }))
+      .execute('spCandidatos');
+
+    let candidatoPrevio = null;
+    try {
+      candidatoPrevio = candidatoActualResult.recordset[0]["DATOS"] ? JSON.parse(candidatoActualResult.recordset[0]["DATOS"]) : null;
+    } catch (e) {
+      candidatoPrevio = candidatoActualResult.recordset[0]["DATOS"];
+    }
+
+    const yaAceptoTratamientoDatos = !!(candidatoPrevio && (candidatoPrevio.acepto_tratamiento_datos === true || candidatoPrevio.acepto_tratamiento_datos === 1));
+    const aceptaTratamientoDatosAhora = acepto_tratamiento_datos === true || acepto_tratamiento_datos === 'true';
+
+    if (!yaAceptoTratamientoDatos && !aceptaTratamientoDatosAhora) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe aceptar el tratamiento de datos personales para postularse.' });
+    }
+
     // Parse JSON fields
     const parsedExp = typeof experiencias_json === 'string' ? JSON.parse(experiencias_json) : experiencias_json;
     const parsedEst = typeof estudios_json === 'string' ? JSON.parse(estudios_json) : estudios_json;
@@ -191,7 +216,9 @@ exports.create = async (req, res) => {
         id: finalCandidatoId,
         perfil_completo_json: JSON.stringify(perfilCompletoObj),
         hv_archivo_nombre: hv_archivo_nombre,
-        hv_archivo_ruta: hv_archivo_ruta
+        hv_archivo_ruta: hv_archivo_ruta,
+        acepto_tratamiento_datos: aceptaTratamientoDatosAhora,
+        version_tratamiento_datos: VERSION_TRATAMIENTO_DATOS
       }))
       .execute('spCandidatos');
 

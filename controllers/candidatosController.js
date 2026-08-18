@@ -4,6 +4,7 @@ const { sendVerificationEmail } = require('../utils/mailer');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
 
 // Configure Multer storage for candidate resume uploads (perfil page)
 const storage = multer.diskStorage({
@@ -38,10 +39,14 @@ exports.uploadMiddleware = upload;
 // Registro de Candidato
 exports.registro = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, acepto_tratamiento_datos } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: email y password' });
+    }
+
+    if (acepto_tratamiento_datos !== true && acepto_tratamiento_datos !== 'true') {
+      return res.status(400).json({ error: 'Debe aceptar el tratamiento de datos personales para registrarse.' });
     }
 
     // Hash the password
@@ -56,11 +61,13 @@ exports.registro = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
-        email, 
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        email,
         password_hash: passwordHash,
         codigo_verificacion: verificationCode,
-        verificado: 0
+        verificado: 0,
+        acepto_tratamiento_datos: true,
+        version_tratamiento_datos: VERSION_TRATAMIENTO_DATOS
       }))
       .execute('spCandidatos')
       .then(async function (recordSet) {
