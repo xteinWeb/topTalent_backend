@@ -3,14 +3,15 @@ const { generateDocx } = require('../utils/docxGenerator');
 const { Packer } = require('docx');
 
 // Helper function to call n8n Webhook
-async function obtenerPreguntasN8N(area, cargo, perfil_json) {
-  const webhookUrl = process.env.N8N_WEBHOOK_PERFILES_URL;
+async function obtenerPreguntasN8N(id, area, cargo, perfil_json) {
+  const webhookUrl = process.env.N8N_WEBHOOK_PREGUNTAS_URL;
   if (!webhookUrl) {
-    console.warn('N8N_WEBHOOK_PERFILES_URL not configured. Skipping questions generation.');
+    console.warn('N8N_WEBHOOK_PREGUNTAS_URL not configured. Skipping questions generation.');
     return null;
   }
   try {
-    const prompt = perfil_json.prompt || `A partir del siguiente perfil del cargo genera un banco de preguntas para ser utilizado durante la postulación.
+    if (!perfil_json.prompt) {
+      perfil_json.prompt = `A partir del siguiente perfil del cargo genera un banco de preguntas para ser utilizado durante la postulación.
 
       Reglas:
       - Genera entre 8 y 12 preguntas.
@@ -29,6 +30,7 @@ async function obtenerPreguntasN8N(area, cargo, perfil_json) {
       - Si el perfil exige conocimientos específicos (NIIF, Inventarios, SQL, Flutter, etc.) genera preguntas relacionadas con esos conocimientos.
       - Si una función del cargo es crítica, genera un caso práctico basado en ella.
       - Devuelve únicamente un JSON.`;
+    }
 
     console.log(`Calling n8n webhook: ${webhookUrl}`);
     const response = await fetch(webhookUrl, {
@@ -37,7 +39,7 @@ async function obtenerPreguntasN8N(area, cargo, perfil_json) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        prompt,
+        id,
         area,
         cargo,
         perfil_json
@@ -283,13 +285,13 @@ exports.delete = async (req, res) => {
 // POST generate questions using n8n (on-demand)
 exports.generateQuestions = async (req, res) => {
   try {
-    const { area, cargo, perfil_json } = req.body;
+    const { id, area, cargo, perfil_json } = req.body;
 
     if (!area || !cargo || !perfil_json) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
     }
 
-    const preguntas = await obtenerPreguntasN8N(area, cargo, perfil_json);
+    const preguntas = await obtenerPreguntasN8N(id, area, cargo, perfil_json);
     if (!preguntas) {
       return res.status(500).json({ error: 'No se pudieron generar las preguntas del cargo. Verifique la configuración del webhook.' });
     }
