@@ -19,7 +19,7 @@ module.exports = {
         FRONTEND_URL: '',
         N8N_WEBHOOK_POSTULACIONES_URL: 'https://agentes.colchonessunmoon.com/webhook/ef34c04b-32a1-4358-b8d8-28a4d7948690',
         N8N_WEBHOOK_PERFILES_URL: 'https://agentes.colchonessunmoon.com/webhook/206de3fe-864d-43ba-994c-d0d7b2544ac9',
-        N8N_WEBHOOK_PREGUNTAS_URL: 'https://agentes.colchonessunmoon.com/webhook-test/6a27d132-6591-43e8-b3dc-18e3c0ef9379',
+        N8N_WEBHOOK_PREGUNTAS_URL: 'https://agentes.colchonessunmoon.com/webhook/6a27d132-6591-43e8-b3dc-18e3c0ef9379',
         SMTP_HOST: 'smtp.gmail.com',
         SMTP_PORT: 465,
         SMTP_USER: 'soporte@artdecon.com',
