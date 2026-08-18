@@ -18,6 +18,7 @@ async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
     formData.append('titulo_vacante', payload.vacante ? payload.vacante.titulo : '');
     formData.append('id_candidato', payload.candidato ? payload.candidato.id : '');
     formData.append('candidato', JSON.stringify(payload.candidato));
+    formData.append('preguntas_respondidas', JSON.stringify(payload.preguntas_respondidas || []));
 
     if (archivoPath && fs.existsSync(archivoPath)) {
       const fileBuffer = fs.readFileSync(archivoPath);
@@ -259,7 +260,8 @@ exports.create = async (req, res) => {
             email: correo,
             perfil_completo_json: candidatoActual ? candidatoActual.perfil_completo_json : perfilCompletoObj,
             hv_archivo_nombre: hvArchivoNombreFinal
-          }
+          },
+          preguntas_respondidas: parsedPreguntas
         }, hvArchivoPath, hvArchivoNombreFinal);
       } catch (notifyErr) {
         console.error('Error preparando notificación de postulación a n8n:', notifyErr);
