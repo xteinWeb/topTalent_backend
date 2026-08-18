@@ -91,7 +91,18 @@ exports.create = async (req, res) => {
       habilidades_json,
       candidato_id,
       preguntas_respondidas_json,
-      acepto_tratamiento_datos
+      acepto_tratamiento_datos,
+      edad,
+      eps,
+      fondo_pension,
+      direccion,
+      barrio,
+      ciudad,
+      estado_civil,
+      talla_camisa,
+      talla_pantalon,
+      talla_zapato,
+      personas_a_cargo_json
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo) {
@@ -180,6 +191,9 @@ exports.create = async (req, res) => {
     const parsedPreguntas = preguntas_respondidas_json
       ? (typeof preguntas_respondidas_json === 'string' ? JSON.parse(preguntas_respondidas_json) : preguntas_respondidas_json)
       : [];
+    const parsedPersonasACargo = personas_a_cargo_json
+      ? (typeof personas_a_cargo_json === 'string' ? JSON.parse(personas_a_cargo_json) : personas_a_cargo_json)
+      : [];
 
     const preguntaObligatoriaSinResponder = Array.isArray(parsedPreguntas) && parsedPreguntas.some(
       p => p.obligatoria && (p.respuesta === undefined || p.respuesta === null || String(p.respuesta).trim() === '')
@@ -200,6 +214,17 @@ exports.create = async (req, res) => {
       telefono,
       cedula: cedulaVal,
       fecha_nacimiento: fechaNacVal,
+      edad: edad || '',
+      eps: eps || '',
+      fondo_pension: fondo_pension || '',
+      direccion: direccion || '',
+      barrio: barrio || '',
+      ciudad: ciudad || '',
+      estado_civil: estado_civil || '',
+      talla_camisa: talla_camisa || '',
+      talla_pantalon: talla_pantalon || '',
+      talla_zapato: talla_zapato || '',
+      personas_a_cargo: parsedPersonasACargo,
       tieneEducacionFormal: parsedEst && parsedEst.length > 0 ? 'Si' : 'No',
       tieneEducacionInformal: parsedEst && parsedEst.some(e => e.nivel && e.nivel.includes('Cursos y Certificaciones')) ? 'Si' : 'No',
       estudios: parsedEst || [],
