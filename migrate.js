@@ -123,7 +123,8 @@ async function migrate() {
           candidato_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES candidatos(id) ON DELETE CASCADE,
           fecha_postulacion DATETIME2 DEFAULT GETDATE(),
           respuesta_ia NVARCHAR(MAX),
-          estado_ia NVARCHAR(MAX)
+          estado_ia NVARCHAR(MAX),
+          preguntas_respondidas_json NVARCHAR(MAX)
         );
       `;
             await pool.request().query(createPostulacionesQuery);
@@ -177,6 +178,11 @@ async function migrate() {
                 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'candidato_id')
                 BEGIN
                     ALTER TABLE postulaciones ADD candidato_id UNIQUEIDENTIFIER NULL;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'preguntas_respondidas_json')
+                BEGIN
+                    ALTER TABLE postulaciones ADD preguntas_respondidas_json NVARCHAR(MAX) NULL;
                 END
 
                 -- Delete orphan records if any
@@ -568,12 +574,15 @@ async function migrate() {
           DECLARE @id UNIQUEIDENTIFIER = NULL;
           DECLARE @vacante_id UNIQUEIDENTIFIER = NULL;
           DECLARE @candidato_id UNIQUEIDENTIFIER = NULL;
+          DECLARE @preguntas_respondidas_json NVARCHAR(MAX) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
               SET @vacante_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.vacante_id') AS UNIQUEIDENTIFIER);
               SET @candidato_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.candidato_id') AS UNIQUEIDENTIFIER);
+              SET @preguntas_respondidas_json = JSON_QUERY(@DATA_JSON, '$.preguntas_respondidas_json');
+              IF @preguntas_respondidas_json IS NULL SET @preguntas_respondidas_json = JSON_VALUE(@DATA_JSON, '$.preguntas_respondidas_json');
           END
 
           IF @ACCION = 'SELECT_ALL'
@@ -591,12 +600,13 @@ async function migrate() {
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), '[]')) AS experiencias_json, 
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), '[]')) AS estudios_json, 
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), '[]')) AS idiomas_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json, 
-                      c.hv_archivo_nombre AS hv_archivo_nombre, 
-                      c.hv_archivo_ruta AS hv_archivo_ruta, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json,
+                      c.hv_archivo_nombre AS hv_archivo_nombre,
+                      c.hv_archivo_ruta AS hv_archivo_ruta,
                       p.fecha_postulacion,
                       p.respuesta_ia,
-                      p.estado_ia
+                      p.estado_ia,
+                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
@@ -619,12 +629,13 @@ async function migrate() {
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.experiencias'), '[]')) AS experiencias_json, 
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.estudios'), '[]')) AS estudios_json, 
                       JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.idiomas'), '[]')) AS idiomas_json, 
-                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json, 
-                      c.hv_archivo_nombre AS hv_archivo_nombre, 
-                      c.hv_archivo_ruta AS hv_archivo_ruta, 
+                      JSON_QUERY(COALESCE(JSON_QUERY(c.perfil_completo_json, '$.habilidades'), '{}')) AS habilidades_json,
+                      c.hv_archivo_nombre AS hv_archivo_nombre,
+                      c.hv_archivo_ruta AS hv_archivo_ruta,
                       p.fecha_postulacion,
                       p.respuesta_ia,
-                      p.estado_ia
+                      p.estado_ia,
+                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
@@ -643,10 +654,10 @@ async function migrate() {
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
               INSERT INTO postulaciones (
-                  id, vacante_id, candidato_id
-              ) 
+                  id, vacante_id, candidato_id, preguntas_respondidas_json
+              )
               VALUES (
-                  @InsertedID, @vacante_id, @candidato_id
+                  @InsertedID, @vacante_id, @candidato_id, @preguntas_respondidas_json
               );
 
               SELECT (

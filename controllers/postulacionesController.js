@@ -85,9 +85,10 @@ exports.create = async (req, res) => {
       perfil_profesional, 
       experiencias_json, 
       estudios_json, 
-      idiomas_json, 
+      idiomas_json,
       habilidades_json,
-      candidato_id
+      candidato_id,
+      preguntas_respondidas_json
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo) {
@@ -150,6 +151,19 @@ exports.create = async (req, res) => {
     const parsedEst = typeof estudios_json === 'string' ? JSON.parse(estudios_json) : estudios_json;
     const parsedIdi = typeof idiomas_json === 'string' ? JSON.parse(idiomas_json) : idiomas_json;
     const parsedHab = typeof habilidades_json === 'string' ? JSON.parse(habilidades_json) : habilidades_json;
+    const parsedPreguntas = preguntas_respondidas_json
+      ? (typeof preguntas_respondidas_json === 'string' ? JSON.parse(preguntas_respondidas_json) : preguntas_respondidas_json)
+      : [];
+
+    const preguntaObligatoriaSinResponder = Array.isArray(parsedPreguntas) && parsedPreguntas.some(
+      p => p.obligatoria && (p.respuesta === undefined || p.respuesta === null || String(p.respuesta).trim() === '')
+    );
+    if (preguntaObligatoriaSinResponder) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe responder todas las preguntas obligatorias del cargo antes de postularse.' });
+    }
 
     const cedulaVal = req.body.cedula || '';
     const fechaNacVal = req.body.fecha_nacimiento || '';
@@ -183,9 +197,10 @@ exports.create = async (req, res) => {
     // Create postulation record referencing candidato_id
     const postulationResult = await pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+      .input('DATA_JSON', sql.NVarChar, JSON.stringify({
         vacante_id,
-        candidato_id: finalCandidatoId
+        candidato_id: finalCandidatoId,
+        preguntas_respondidas_json: JSON.stringify(parsedPreguntas)
       }))
       .execute('spPostulaciones');
 
