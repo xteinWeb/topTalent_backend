@@ -253,6 +253,19 @@ exports.updatePerfil = async (req, res) => {
       ? (typeof req.body.perfil_completo_json === 'string' ? JSON.parse(req.body.perfil_completo_json) : req.body.perfil_completo_json)
       : undefined;
 
+    // perfil_completo_json fully replaces the stored profile (no merge), so a save with
+    // blank identity fields would silently wipe out previously valid data for this
+    // candidate and every application already linked to them.
+    if (perfil_completo_json && (
+      !String(perfil_completo_json.nombre_completo || '').trim() ||
+      !String(perfil_completo_json.telefono || '').trim() ||
+      !String(perfil_completo_json.cedula || '').trim() ||
+      !String(perfil_completo_json.fecha_nacimiento || '').trim()
+    )) {
+      if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
+      return res.status(400).json({ error: 'Debe completar nombre, teléfono, cédula y fecha de nacimiento antes de guardar el perfil.' });
+    }
+
     // Only overwrite the resume file fields when a new file was actually uploaded;
     // otherwise leave the candidate's existing file untouched.
     const hv_archivo_nombre = req.file ? req.file.originalname : undefined;

@@ -105,11 +105,11 @@ exports.create = async (req, res) => {
       personas_a_cargo_json
     } = req.body;
 
-    if (!vacante_id || !nombre_completo || !correo) {
+    if (!vacante_id || !nombre_completo || !correo || !telefono || !req.body.cedula || !req.body.fecha_nacimiento) {
       if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
         fs.unlinkSync(uploadedFileRuta);
       }
-      return res.status(400).json({ error: 'Faltan campos obligatorios: vacante_id, nombre_completo, correo' });
+      return res.status(400).json({ error: 'Faltan campos obligatorios: vacante_id, nombre_completo, correo, telefono, cedula, fecha_nacimiento' });
     }
 
     const hv_archivo_nombre = req.file ? req.file.originalname : null;
@@ -203,6 +203,81 @@ exports.create = async (req, res) => {
         fs.unlinkSync(uploadedFileRuta);
       }
       return res.status(400).json({ error: 'Debe responder todas las preguntas obligatorias del cargo antes de postularse.' });
+    }
+
+    // Enforce profile completeness server-side (mirrors the frontend rules), so an
+    // outdated frontend build or a direct API call cannot skip the requirement.
+    const camposAdicionalesCompletos = !!(
+      String(edad || '').trim() && String(estado_civil || '').trim() && String(eps || '').trim() &&
+      String(fondo_pension || '').trim() && String(direccion || '').trim() && String(barrio || '').trim() &&
+      String(ciudad || '').trim() && String(talla_camisa || '').trim() && String(talla_pantalon || '').trim() &&
+      String(talla_zapato || '').trim()
+    );
+    if (!camposAdicionalesCompletos) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe completar todos los datos personales adicionales obligatorios (edad, estado civil, EPS, fondo de pensión, dirección, barrio, ciudad y tallas).' });
+    }
+
+    const tieneArchivoHv = !!req.file || !!(candidatoPrevio && candidatoPrevio.hv_archivo_nombre);
+    if (!tieneArchivoHv) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe adjuntar su archivo de Hoja de Vida (PDF) para completar la postulación.' });
+    }
+
+    const vacanteConfigResult = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: vacante_id }))
+      .execute('spVacantes');
+
+    let vacanteParaValidar = null;
+    try {
+      vacanteParaValidar = vacanteConfigResult.recordset[0]["DATOS"] ? JSON.parse(vacanteConfigResult.recordset[0]["DATOS"]) : null;
+    } catch (e) {
+      vacanteParaValidar = vacanteConfigResult.recordset[0]["DATOS"];
+    }
+
+    let camposRequeridos = { nivel_educativo: true, experiencia_laboral: true, idiomas_habilidades: true };
+    if (vacanteParaValidar && vacanteParaValidar.configuracion_json) {
+      try {
+        const parsedConfig = typeof vacanteParaValidar.configuracion_json === 'string'
+          ? JSON.parse(vacanteParaValidar.configuracion_json)
+          : vacanteParaValidar.configuracion_json;
+        camposRequeridos = { ...camposRequeridos, ...parsedConfig };
+      } catch (e) {
+        // Keep defaults (all required) if the stored configuration is malformed
+      }
+    }
+
+    if (camposRequeridos.nivel_educativo !== false && (!parsedEst || parsedEst.length === 0)) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe registrar al menos un nivel educativo para completar la postulación.' });
+    }
+
+    if (camposRequeridos.experiencia_laboral !== false && (!parsedExp || parsedExp.length === 0)) {
+      if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+        fs.unlinkSync(uploadedFileRuta);
+      }
+      return res.status(400).json({ error: 'Debe registrar al menos una experiencia laboral para completar la postulación.' });
+    }
+
+    if (camposRequeridos.idiomas_habilidades !== false) {
+      const habilidadesLlenas = parsedHab && (
+        (parsedHab.tecnicas && parsedHab.tecnicas.length > 0) ||
+        (parsedHab.interpersonales && parsedHab.interpersonales.length > 0) ||
+        (parsedHab.otros && parsedHab.otros.length > 0)
+      );
+      if (!habilidadesLlenas && (!parsedIdi || parsedIdi.length === 0)) {
+        if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+          fs.unlinkSync(uploadedFileRuta);
+        }
+        return res.status(400).json({ error: 'Debe registrar al menos un idioma o una habilidad para completar la postulación.' });
+      }
     }
 
     const cedulaVal = req.body.cedula || '';
