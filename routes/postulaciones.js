@@ -13,6 +13,9 @@ router.get('/', postulacionesController.getAll);
 // Admin endpoint to view candidates by vacancy
 router.get('/vacante/:vacanteId', postulacionesController.getByVacante);
 
+// Admin endpoint to trigger the second-pass AI validation workflow for a vacancy
+router.post('/vacante/:vacanteId/validar', postulacionesController.ejecutarValidacion);
+
 // Admin endpoint to download CV file
 router.get('/download/:filename', postulacionesController.downloadFile);
 

@@ -481,6 +481,43 @@ exports.getByVacante = async (req, res) => {
   }
 };
 
+// POST trigger the n8n "segunda validación" workflow for all applicants of a vacancy
+exports.ejecutarValidacion = async (req, res) => {
+  try {
+    const { vacanteId } = req.params;
+    if (!vacanteId) {
+      return res.status(400).json({ error: 'Falta el id de la vacante.' });
+    }
+
+    const webhookUrl = process.env.N8N_WEBHOOK_VALIDACION_URL;
+    if (!webhookUrl) {
+      return res.status(500).json({ error: 'N8N_WEBHOOK_VALIDACION_URL no está configurado en el servidor.' });
+    }
+
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vacante_id: vacanteId })
+    });
+
+    if (!response.ok) {
+      throw new Error(`n8n response error: ${response.status} ${response.statusText}`);
+    }
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (e) {
+      // El workflow puede no responder JSON; no es un error bloqueante.
+    }
+
+    res.json({ message: 'Validación ejecutada exitosamente', data });
+  } catch (err) {
+    console.error('Error al ejecutar el webhook de validación:', err);
+    res.status(500).json({ error: 'No se pudo ejecutar la validación: ' + err.message });
+  }
+};
+
 // GET download candidate resume file
 exports.downloadFile = (req, res) => {
   const { filename } = req.params;
