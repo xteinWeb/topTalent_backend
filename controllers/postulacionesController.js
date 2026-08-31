@@ -3,6 +3,10 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
+const { Packer } = require('docx');
+const { generateHojaVidaCorporativaDocx } = require('../utils/docxGenerator');
+
+const LOGO_PATH = path.join(__dirname, '../assets/logo-artdecon.png');
 
 // Helper function to notify n8n about a new job application, attaching the resume file as multipart/form-data
 async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
@@ -515,6 +519,60 @@ exports.ejecutarValidacion = async (req, res) => {
   } catch (err) {
     console.error('Error al ejecutar el webhook de validación:', err);
     res.status(500).json({ error: 'No se pudo ejecutar la validación: ' + err.message });
+  }
+};
+
+// GET export a candidate's profile as the FTO-GH-001 "Hoja de Vida Corporativa" DOCX
+exports.exportHojaVidaCorporativaDocx = async (req, res) => {
+  try {
+    const { candidatoId } = req.params;
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: candidatoId }))
+      .execute('spCandidatos');
+
+    let candidato = null;
+    try {
+      candidato = result.recordset[0]["DATOS"] ? JSON.parse(result.recordset[0]["DATOS"]) : null;
+    } catch (e) {
+      candidato = result.recordset[0]["DATOS"];
+    }
+
+    if (!candidato) {
+      return res.status(404).json({ error: 'Candidato no encontrado' });
+    }
+
+    let perfil = candidato.perfil_completo_json;
+    if (typeof perfil === 'string') {
+      try {
+        perfil = JSON.parse(perfil);
+      } catch (e) {
+        perfil = {};
+      }
+    }
+    perfil = perfil || {};
+    perfil.correo = perfil.correo || candidato.email;
+
+    const cargo = req.query.vacante || '';
+    const fecha = req.query.fecha ? new Date(req.query.fecha).toLocaleDateString('es-CO') : '';
+
+    let logoBuffer = null;
+    if (fs.existsSync(LOGO_PATH)) {
+      logoBuffer = fs.readFileSync(LOGO_PATH);
+    }
+
+    const doc = generateHojaVidaCorporativaDocx(perfil, cargo, fecha, logoBuffer);
+    const buffer = await Packer.toBuffer(doc);
+
+    const fileName = `HOJA_DE_VIDA_${(perfil.nombre_completo || candidato.email || 'CANDIDATO').toUpperCase().replace(/\s+/g, '_')}.docx`;
+
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Error al exportar la hoja de vida corporativa:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 

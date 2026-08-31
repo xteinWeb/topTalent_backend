@@ -16,6 +16,9 @@ router.get('/vacante/:vacanteId', postulacionesController.getByVacante);
 // Admin endpoint to trigger the second-pass AI validation workflow for a vacancy
 router.post('/vacante/:vacanteId/validar', postulacionesController.ejecutarValidacion);
 
+// Admin endpoint to export a candidate's profile as the corporate CV (FTO-GH-001) DOCX
+router.get('/candidato/:candidatoId/hoja-vida-docx', postulacionesController.exportHojaVidaCorporativaDocx);
+
 // Admin endpoint to download CV file
 router.get('/download/:filename', postulacionesController.downloadFile);
 
