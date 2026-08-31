@@ -102,7 +102,10 @@ exports.create = async (req, res) => {
       talla_camisa,
       talla_pantalon,
       talla_zapato,
-      personas_a_cargo_json
+      personas_a_cargo_json,
+      tiene_familiares_empresa,
+      detalle_familiares_empresa,
+      funciones_desempenar
     } = req.body;
 
     if (!vacante_id || !nombre_completo || !correo || !telefono || !req.body.cedula || !req.body.fecha_nacimiento) {
@@ -207,17 +210,20 @@ exports.create = async (req, res) => {
 
     // Enforce profile completeness server-side (mirrors the frontend rules), so an
     // outdated frontend build or a direct API call cannot skip the requirement.
+    const tieneFamiliaresVal = String(tiene_familiares_empresa || '').trim();
     const camposAdicionalesCompletos = !!(
       String(edad || '').trim() && String(estado_civil || '').trim() && String(eps || '').trim() &&
       String(fondo_pension || '').trim() && String(direccion || '').trim() && String(barrio || '').trim() &&
       String(ciudad || '').trim() && String(talla_camisa || '').trim() && String(talla_pantalon || '').trim() &&
-      String(talla_zapato || '').trim()
+      String(talla_zapato || '').trim() && tieneFamiliaresVal &&
+      (tieneFamiliaresVal !== 'Si' || String(detalle_familiares_empresa || '').trim()) &&
+      String(funciones_desempenar || '').trim()
     );
     if (!camposAdicionalesCompletos) {
       if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
         fs.unlinkSync(uploadedFileRuta);
       }
-      return res.status(400).json({ error: 'Debe completar todos los datos personales adicionales obligatorios (edad, estado civil, EPS, fondo de pensión, dirección, barrio, ciudad y tallas).' });
+      return res.status(400).json({ error: 'Debe completar todos los datos personales adicionales obligatorios (edad, estado civil, EPS, fondo de pensión, dirección, barrio, ciudad, tallas, familiares en la empresa y funciones a desempeñar).' });
     }
 
     const tieneArchivoHv = !!req.file || !!(candidatoPrevio && candidatoPrevio.hv_archivo_nombre);
@@ -300,6 +306,9 @@ exports.create = async (req, res) => {
       talla_pantalon: talla_pantalon || '',
       talla_zapato: talla_zapato || '',
       personas_a_cargo: parsedPersonasACargo,
+      tiene_familiares_empresa: tiene_familiares_empresa || '',
+      detalle_familiares_empresa: detalle_familiares_empresa || '',
+      funciones_desempenar: funciones_desempenar || '',
       tieneEducacionFormal: parsedEst && parsedEst.length > 0 ? 'Si' : 'No',
       tieneEducacionInformal: parsedEst && parsedEst.some(e => e.nivel && e.nivel.includes('Cursos y Certificaciones')) ? 'Si' : 'No',
       estudios: parsedEst || [],

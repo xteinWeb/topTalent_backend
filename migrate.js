@@ -139,7 +139,11 @@ async function migrate() {
           fecha_postulacion DATETIME2 DEFAULT GETDATE(),
           respuesta_ia NVARCHAR(MAX),
           estado_ia NVARCHAR(MAX),
-          preguntas_respondidas_json NVARCHAR(MAX)
+          preguntas_respondidas_json NVARCHAR(MAX),
+          puntuacion_ia INT NULL,
+          json_analisis_ia NVARCHAR(MAX) NULL,
+          posicion INT NULL,
+          segunda_validacion BIT NULL
         );
       `;
             await pool.request().query(createPostulacionesQuery);
@@ -198,6 +202,23 @@ async function migrate() {
                 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'preguntas_respondidas_json')
                 BEGIN
                     ALTER TABLE postulaciones ADD preguntas_respondidas_json NVARCHAR(MAX) NULL;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'puntuacion_ia')
+                BEGIN
+                    ALTER TABLE postulaciones ADD puntuacion_ia INT NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'json_analisis_ia')
+                BEGIN
+                    ALTER TABLE postulaciones ADD json_analisis_ia NVARCHAR(MAX) NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'posicion')
+                BEGIN
+                    ALTER TABLE postulaciones ADD posicion INT NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'segunda_validacion')
+                BEGIN
+                    ALTER TABLE postulaciones ADD segunda_validacion BIT NULL;
                 END
 
                 -- Delete orphan records if any
@@ -621,6 +642,10 @@ async function migrate() {
                       p.fecha_postulacion,
                       p.respuesta_ia,
                       p.estado_ia,
+                      p.puntuacion_ia,
+                      p.posicion,
+                      p.segunda_validacion,
+                      JSON_QUERY(p.json_analisis_ia) AS json_analisis_ia,
                       JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
@@ -650,6 +675,10 @@ async function migrate() {
                       p.fecha_postulacion,
                       p.respuesta_ia,
                       p.estado_ia,
+                      p.puntuacion_ia,
+                      p.posicion,
+                      p.segunda_validacion,
+                      JSON_QUERY(p.json_analisis_ia) AS json_analisis_ia,
                       JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
