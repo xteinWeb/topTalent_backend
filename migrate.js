@@ -602,6 +602,29 @@ async function migrate() {
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
           END
+          ELSE IF @ACCION = 'SELECT_BY_ID'
+          BEGIN
+              SELECT (
+                  SELECT 
+                      u.id, 
+                      u.empresa_id, 
+                      e.nombre AS empresa_nombre, 
+                      e.activo AS empresa_activo,
+                      e.fecha_creacion AS empresa_fecha_creacion,
+                      u.nombre, 
+                      u.username, 
+                      u.email, 
+                      u.password_hash, 
+                      u.rol, 
+                      u.activo,
+                      u.fecha_creacion,
+                      u.fecha_actualizacion
+                  FROM usuarios_admin u
+                  INNER JOIN empresas e ON u.empresa_id = e.id
+                  WHERE u.id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
           ELSE IF @ACCION = 'SELECT_ALL'
           BEGIN
               SELECT (
@@ -643,7 +666,7 @@ async function migrate() {
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
           END
-          ELSE IF @ACCION = 'UPDATE'
+          ELSE IF @ACCION = 'UPDATE' OR @ACCION = 'UPDATE_PERFIL'
           BEGIN
               UPDATE usuarios_admin
               SET nombre = ISNULL(@nombre, nombre),
@@ -654,7 +677,21 @@ async function migrate() {
                   fecha_actualizacion = GETDATE()
               WHERE id = @id;
 
-              SELECT '{"message": "Usuario administrador actualizado exitosamente"}' AS DATOS;
+              SELECT (
+                  SELECT 
+                      u.id, 
+                      u.empresa_id, 
+                      e.nombre AS empresa_nombre, 
+                      u.nombre, 
+                      u.username, 
+                      u.email, 
+                      u.rol, 
+                      u.activo
+                  FROM usuarios_admin u
+                  INNER JOIN empresas e ON u.empresa_id = e.id
+                  WHERE u.id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
           END
       END;
     `);
