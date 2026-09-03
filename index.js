@@ -23,6 +23,7 @@ const vacantesRoutes = require('./routes/vacantes');
 const postulacionesRoutes = require('./routes/postulaciones');
 const candidatosRoutes = require('./routes/candidatos');
 const catalogosRoutes = require('./routes/catalogos');
+const empresasRoutes = require('./routes/empresas');
 
 // Register modular routes
 app.use('/api/auth', authRoutes);
@@ -31,6 +32,7 @@ app.use('/api/vacantes', vacantesRoutes);
 app.use('/api/postulaciones', postulacionesRoutes);
 app.use('/api/candidatos', candidatosRoutes);
 app.use('/api/catalogos', catalogosRoutes);
+app.use('/api/empresas', empresasRoutes);
 
 // Basic health check endpoint
 app.get('/api/health', (req, res) => {

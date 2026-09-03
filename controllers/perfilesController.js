@@ -62,10 +62,11 @@ async function obtenerPreguntasN8N(id, area, cargo, perfil_json) {
 // GET all profiles
 exports.getAll = async (req, res) => {
   try {
+    const empresa_id = req.query.empresa_id || req.headers['x-empresa-id'] || null;
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'SELECT_ALL')
-      .input('DATA_JSON', sql.VarChar, null)
+      .input('DATA_JSON', sql.VarChar, empresa_id ? JSON.stringify({ empresa_id }) : null)
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
         let refresh = undefined;

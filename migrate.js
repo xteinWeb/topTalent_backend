@@ -1,10 +1,91 @@
 const { sql, poolPromise } = require('./config/db');
+const bcrypt = require('bcryptjs');
 
 async function migrate() {
     try {
         console.log('Connecting to database...');
         const pool = await poolPromise;
         console.log('Checking database tables...');
+
+        // 0. Create empresas table if not exists
+        const checkEmpresasQuery = `
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_NAME = 'empresas'
+    `;
+        const checkEmpresasResult = await pool.request().query(checkEmpresasQuery);
+        if (checkEmpresasResult.recordset.length === 0) {
+            console.log('Table "empresas" does not exist. Creating...');
+            const createEmpresasQuery = `
+        CREATE TABLE empresas (
+          id VARCHAR(20) PRIMARY KEY,
+          nombre NVARCHAR(250) NOT NULL,
+          activo BIT DEFAULT 1 NOT NULL,
+          fecha_creacion DATETIME2 DEFAULT GETDATE(),
+          fecha_actualizacion DATETIME2 DEFAULT GETDATE()
+        );
+      `;
+            await pool.request().query(createEmpresasQuery);
+            console.log('Table "empresas" created successfully.');
+        } else {
+            console.log('Table "empresas" already exists.');
+        }
+
+        // Seed initial empresa '00'
+        const seedEmpresaQuery = `
+            IF NOT EXISTS (SELECT 1 FROM empresas WHERE id = '00')
+            BEGIN
+                INSERT INTO empresas (id, nombre, activo) 
+                VALUES ('00', 'ARTDECON DE COLOMBIA S.A.S', 1);
+                PRINT 'Empresa 00 (ARTDECON DE COLOMBIA S.A.S) creada.';
+            END
+        `;
+        await pool.request().query(seedEmpresaQuery);
+
+        // 0.5 Create usuarios_admin table if not exists
+        const checkUsuariosAdminQuery = `
+      SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_NAME = 'usuarios_admin'
+    `;
+        const checkUsuariosAdminResult = await pool.request().query(checkUsuariosAdminQuery);
+        if (checkUsuariosAdminResult.recordset.length === 0) {
+            console.log('Table "usuarios_admin" does not exist. Creating...');
+            const createUsuariosAdminQuery = `
+        CREATE TABLE usuarios_admin (
+          id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
+          empresa_id VARCHAR(20) NOT NULL FOREIGN KEY REFERENCES empresas(id),
+          nombre NVARCHAR(150) NOT NULL,
+          username NVARCHAR(100) UNIQUE NOT NULL,
+          email NVARCHAR(250) NULL,
+          password_hash NVARCHAR(MAX) NOT NULL,
+          rol NVARCHAR(50) DEFAULT 'ADMIN' NOT NULL,
+          activo BIT DEFAULT 1 NOT NULL,
+          fecha_creacion DATETIME2 DEFAULT GETDATE(),
+          fecha_actualizacion DATETIME2 DEFAULT GETDATE()
+        );
+      `;
+            await pool.request().query(createUsuariosAdminQuery);
+            console.log('Table "usuarios_admin" created successfully.');
+        } else {
+            console.log('Table "usuarios_admin" already exists.');
+        }
+
+        // Seed initial admin user for company '00'
+        const checkAdminUser = await pool.request().query("SELECT COUNT(*) AS total FROM usuarios_admin WHERE username = 'admin'");
+        if (checkAdminUser.recordset[0].total === 0) {
+            const defaultPasswordHash = await bcrypt.hash('admin123', 10);
+            await pool.request()
+                .input('empresa_id', sql.VarChar(20), '00')
+                .input('nombre', sql.NVarChar(150), 'Administrador Artdecon')
+                .input('username', sql.NVarChar(100), 'admin')
+                .input('email', sql.NVarChar(250), 'admin@artdecon.com')
+                .input('password_hash', sql.NVarChar(sql.MAX), defaultPasswordHash)
+                .input('rol', sql.NVarChar(50), 'ADMIN')
+                .query(`
+                    INSERT INTO usuarios_admin (empresa_id, nombre, username, email, password_hash, rol, activo)
+                    VALUES (@empresa_id, @nombre, @username, @email, @password_hash, @rol, 1)
+                `);
+            console.log('Usuario admin inicial (username: admin / pass: admin123) creado para empresa 00.');
+        }
 
         // 1. Create perfiles_cargo table if not exists
         const checkPerfilesQuery = `
@@ -17,6 +98,7 @@ async function migrate() {
             const createPerfilesQuery = `
         CREATE TABLE perfiles_cargo (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
+          empresa_id VARCHAR(20) DEFAULT '00' NOT NULL FOREIGN KEY REFERENCES empresas(id),
           area NVARCHAR(150) NOT NULL,
           cargo NVARCHAR(150) NOT NULL,
           perfil_json NVARCHAR(MAX) NOT NULL,
@@ -27,7 +109,23 @@ async function migrate() {
             await pool.request().query(createPerfilesQuery);
             console.log('Table "perfiles_cargo" created successfully.');
         } else {
-            console.log('Table "perfiles_cargo" already exists.');
+            console.log('Table "perfiles_cargo" already exists. Verifying columns...');
+            const alterPerfilesColsQuery = `
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'perfiles_cargo' AND COLUMN_NAME = 'empresa_id')
+                BEGIN
+                    ALTER TABLE perfiles_cargo ADD empresa_id VARCHAR(20) DEFAULT '00' NOT NULL;
+                END
+                EXEC('UPDATE perfiles_cargo SET empresa_id = ''00'' WHERE empresa_id IS NULL');
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys 
+                    WHERE parent_object_id = OBJECT_ID('perfiles_cargo') 
+                    AND name = 'FK_perfiles_cargo_empresas'
+                )
+                BEGIN
+                    ALTER TABLE perfiles_cargo ADD CONSTRAINT FK_perfiles_cargo_empresas FOREIGN KEY (empresa_id) REFERENCES empresas(id);
+                END
+            `;
+            await pool.request().query(alterPerfilesColsQuery);
         }
 
         // 2. Create vacantes table if not exists
@@ -41,6 +139,7 @@ async function migrate() {
             const createVacantesQuery = `
         CREATE TABLE vacantes (
           id UNIQUEIDENTIFIER DEFAULT NEWID() PRIMARY KEY,
+          empresa_id VARCHAR(20) DEFAULT '00' NOT NULL FOREIGN KEY REFERENCES empresas(id),
           perfil_id UNIQUEIDENTIFIER NOT NULL FOREIGN KEY REFERENCES perfiles_cargo(id) ON DELETE CASCADE,
           titulo NVARCHAR(200) NOT NULL,
           descripcion NVARCHAR(MAX) NOT NULL,
@@ -55,8 +154,21 @@ async function migrate() {
             console.log('Table "vacantes" created successfully.');
         } else {
             console.log('Table "vacantes" already exists. Verifying columns...');
-            // Check and add requiere_registro and configuracion_json if they don't exist
+            // Check and add columns if they don't exist
             const addColsQuery = `
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'empresa_id')
+                BEGIN
+                    ALTER TABLE vacantes ADD empresa_id VARCHAR(20) DEFAULT '00' NOT NULL;
+                END
+                EXEC('UPDATE vacantes SET empresa_id = ''00'' WHERE empresa_id IS NULL');
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.foreign_keys 
+                    WHERE parent_object_id = OBJECT_ID('vacantes') 
+                    AND name = 'FK_vacantes_empresas'
+                )
+                BEGIN
+                    ALTER TABLE vacantes ADD CONSTRAINT FK_vacantes_empresas FOREIGN KEY (empresa_id) REFERENCES empresas(id);
+                END
                 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'requiere_registro')
                 BEGIN
                     ALTER TABLE vacantes ADD requiere_registro BIT DEFAULT 1 NOT NULL;
@@ -369,6 +481,185 @@ async function migrate() {
     `);
         console.log('Procedure "spCatalogos" created/updated.');
 
+        // Create/Update spEmpresas
+        console.log('Creating/Updating Stored Procedure spEmpresas...');
+        await pool.request().query(`
+      CREATE OR ALTER PROCEDURE spEmpresas
+          @ACCION VARCHAR(50),
+          @DATA_JSON NVARCHAR(MAX) = NULL
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+
+          DECLARE @id VARCHAR(20) = NULL;
+          DECLARE @nombre NVARCHAR(250) = NULL;
+          DECLARE @activo BIT = NULL;
+
+          IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
+          BEGIN
+              SET @id = JSON_VALUE(@DATA_JSON, '$.id');
+              SET @nombre = JSON_VALUE(@DATA_JSON, '$.nombre');
+              SET @activo = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.activo') AS BIT);
+          END
+
+          IF @ACCION = 'SELECT_ALL'
+          BEGIN
+              SELECT (
+                  SELECT id, nombre, activo, fecha_creacion, fecha_actualizacion
+                  FROM empresas
+                  WHERE activo = 1
+                  ORDER BY id ASC
+                  FOR JSON PATH
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_BY_ID'
+          BEGIN
+              SELECT (
+                  SELECT id, nombre, activo, fecha_creacion, fecha_actualizacion
+                  FROM empresas
+                  WHERE id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'INSERT'
+          BEGIN
+              IF EXISTS (SELECT 1 FROM empresas WHERE id = @id)
+              BEGIN
+                  THROW 50000, 'Ya existe una empresa con ese identificador.', 1;
+              END
+
+              INSERT INTO empresas (id, nombre, activo)
+              VALUES (@id, @nombre, ISNULL(@activo, 1));
+
+              SELECT (
+                  SELECT id, nombre, activo, fecha_creacion, fecha_actualizacion
+                  FROM empresas
+                  WHERE id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'UPDATE'
+          BEGIN
+              UPDATE empresas
+              SET nombre = ISNULL(@nombre, nombre),
+                  activo = ISNULL(@activo, activo),
+                  fecha_actualizacion = GETDATE()
+              WHERE id = @id;
+
+              SELECT '{"message": "Empresa actualizada exitosamente"}' AS DATOS;
+          END
+      END;
+    `);
+        console.log('Procedure "spEmpresas" created/updated.');
+
+        // Create/Update spUsuariosAdmin
+        console.log('Creating/Updating Stored Procedure spUsuariosAdmin...');
+        await pool.request().query(`
+      CREATE OR ALTER PROCEDURE spUsuariosAdmin
+          @ACCION VARCHAR(50),
+          @DATA_JSON NVARCHAR(MAX) = NULL
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+
+          DECLARE @id UNIQUEIDENTIFIER = NULL;
+          DECLARE @empresa_id VARCHAR(20) = NULL;
+          DECLARE @username NVARCHAR(100) = NULL;
+          DECLARE @email NVARCHAR(250) = NULL;
+          DECLARE @nombre NVARCHAR(150) = NULL;
+          DECLARE @password_hash NVARCHAR(MAX) = NULL;
+          DECLARE @rol NVARCHAR(50) = NULL;
+          DECLARE @activo BIT = NULL;
+
+          IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
+          BEGIN
+              SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
+              SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
+              SET @username = JSON_VALUE(@DATA_JSON, '$.username');
+              SET @email = JSON_VALUE(@DATA_JSON, '$.email');
+              SET @nombre = JSON_VALUE(@DATA_JSON, '$.nombre');
+              SET @password_hash = JSON_VALUE(@DATA_JSON, '$.password_hash');
+              SET @rol = JSON_VALUE(@DATA_JSON, '$.rol');
+              SET @activo = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.activo') AS BIT);
+          END
+
+          IF @ACCION = 'SELECT_BY_USERNAME'
+          BEGIN
+              SELECT (
+                  SELECT 
+                      u.id, 
+                      u.empresa_id, 
+                      e.nombre AS empresa_nombre, 
+                      u.nombre, 
+                      u.username, 
+                      u.email, 
+                      u.password_hash, 
+                      u.rol, 
+                      u.activo
+                  FROM usuarios_admin u
+                  INNER JOIN empresas e ON u.empresa_id = e.id
+                  WHERE (u.username = @username OR u.email = @username) AND u.activo = 1
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_ALL'
+          BEGIN
+              SELECT (
+                  SELECT 
+                      u.id, 
+                      u.empresa_id, 
+                      e.nombre AS empresa_nombre, 
+                      u.nombre, 
+                      u.username, 
+                      u.email, 
+                      u.rol, 
+                      u.activo,
+                      u.fecha_creacion,
+                      u.fecha_actualizacion
+                  FROM usuarios_admin u
+                  INNER JOIN empresas e ON u.empresa_id = e.id
+                  WHERE (@empresa_id IS NULL OR u.empresa_id = @empresa_id)
+                  ORDER BY u.fecha_actualizacion DESC
+                  FOR JSON PATH
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'INSERT'
+          BEGIN
+              IF EXISTS (SELECT 1 FROM usuarios_admin WHERE username = @username)
+              BEGIN
+                  THROW 50000, 'El nombre de usuario ya se encuentra registrado.', 1;
+              END
+
+              DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
+
+              INSERT INTO usuarios_admin (id, empresa_id, nombre, username, email, password_hash, rol, activo)
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @nombre, @username, @email, @password_hash, ISNULL(@rol, 'ADMIN'), ISNULL(@activo, 1));
+
+              SELECT (
+                  SELECT u.id, u.empresa_id, e.nombre AS empresa_nombre, u.nombre, u.username, u.email, u.rol
+                  FROM usuarios_admin u
+                  INNER JOIN empresas e ON u.empresa_id = e.id
+                  WHERE u.id = @InsertedID
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'UPDATE'
+          BEGIN
+              UPDATE usuarios_admin
+              SET nombre = ISNULL(@nombre, nombre),
+                  email = ISNULL(@email, email),
+                  password_hash = ISNULL(@password_hash, password_hash),
+                  rol = ISNULL(@rol, rol),
+                  activo = ISNULL(@activo, activo),
+                  fecha_actualizacion = GETDATE()
+              WHERE id = @id;
+
+              SELECT '{"message": "Usuario administrador actualizado exitosamente"}' AS DATOS;
+          END
+      END;
+    `);
+        console.log('Procedure "spUsuariosAdmin" created/updated.');
+
         // 4. Create/Update spPerfilesCargo
         console.log('Creating/Updating Stored Procedure spPerfilesCargo...');
         await pool.request().query(`
@@ -380,6 +671,7 @@ async function migrate() {
           SET NOCOUNT ON;
 
           DECLARE @id UNIQUEIDENTIFIER = NULL;
+          DECLARE @empresa_id VARCHAR(20) = NULL;
           DECLARE @area NVARCHAR(150) = NULL;
           DECLARE @cargo NVARCHAR(150) = NULL;
           DECLARE @perfil_json NVARCHAR(MAX) = NULL;
@@ -387,6 +679,7 @@ async function migrate() {
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
+              SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
               SET @area = JSON_VALUE(@DATA_JSON, '$.area');
               SET @cargo = JSON_VALUE(@DATA_JSON, '$.cargo');
               SET @perfil_json = JSON_QUERY(@DATA_JSON, '$.perfil_json');
@@ -401,14 +694,18 @@ async function migrate() {
           BEGIN
               SELECT (
                   SELECT 
-                      id, 
-                      area, 
-                      cargo, 
-                      JSON_QUERY(perfil_json) AS perfil_json, 
-                      fecha_creacion AS fecha_creacion, 
-                      fecha_actualizacion AS fecha_actualizacion 
-                  FROM perfiles_cargo 
-                  ORDER BY fecha_actualizacion DESC
+                      p.id, 
+                      p.empresa_id,
+                      e.nombre AS empresa_nombre,
+                      p.area, 
+                      p.cargo, 
+                      JSON_QUERY(p.perfil_json) AS perfil_json, 
+                      p.fecha_creacion AS fecha_creacion, 
+                      p.fecha_actualizacion AS fecha_actualizacion 
+                  FROM perfiles_cargo p
+                  LEFT JOIN empresas e ON p.empresa_id = e.id
+                  WHERE (@empresa_id IS NULL OR p.empresa_id = @empresa_id)
+                  ORDER BY p.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
           END
@@ -416,14 +713,17 @@ async function migrate() {
           BEGIN
               SELECT (
                   SELECT 
-                      id, 
-                      area, 
-                      cargo, 
-                      JSON_QUERY(perfil_json) AS perfil_json, 
-                      fecha_creacion AS fecha_creacion, 
-                      fecha_actualizacion AS fecha_actualizacion 
-                  FROM perfiles_cargo 
-                  WHERE id = @id
+                      p.id, 
+                      p.empresa_id,
+                      e.nombre AS empresa_nombre,
+                      p.area, 
+                      p.cargo, 
+                      JSON_QUERY(p.perfil_json) AS perfil_json, 
+                      p.fecha_creacion AS fecha_creacion, 
+                      p.fecha_actualizacion AS fecha_actualizacion 
+                  FROM perfiles_cargo p
+                  LEFT JOIN empresas e ON p.empresa_id = e.id
+                  WHERE p.id = @id
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
           END
@@ -431,12 +731,13 @@ async function migrate() {
           BEGIN
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO perfiles_cargo (id, area, cargo, perfil_json) 
-              VALUES (@InsertedID, @area, @cargo, @perfil_json);
+              INSERT INTO perfiles_cargo (id, empresa_id, area, cargo, perfil_json) 
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @area, @cargo, @perfil_json);
 
               SELECT (
                   SELECT 
                       id, 
+                      empresa_id,
                       area, 
                       cargo 
                   FROM perfiles_cargo 
@@ -447,7 +748,8 @@ async function migrate() {
           ELSE IF @ACCION = 'UPDATE'
           BEGIN
               UPDATE perfiles_cargo 
-              SET area = @area, 
+              SET empresa_id = ISNULL(@empresa_id, empresa_id),
+                  area = @area, 
                   cargo = @cargo, 
                   perfil_json = @perfil_json, 
                   fecha_actualizacion = GETDATE() 
@@ -477,6 +779,7 @@ async function migrate() {
           SET NOCOUNT ON;
 
           DECLARE @id UNIQUEIDENTIFIER = NULL;
+          DECLARE @empresa_id VARCHAR(20) = NULL;
           DECLARE @perfil_id UNIQUEIDENTIFIER = NULL;
           DECLARE @titulo NVARCHAR(200) = NULL;
           DECLARE @descripcion NVARCHAR(MAX) = NULL;
@@ -487,6 +790,7 @@ async function migrate() {
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
+              SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
               SET @perfil_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.perfil_id') AS UNIQUEIDENTIFIER);
               SET @titulo = JSON_VALUE(@DATA_JSON, '$.titulo');
               SET @descripcion = JSON_VALUE(@DATA_JSON, '$.descripcion');
@@ -501,6 +805,8 @@ async function migrate() {
               SELECT (
                   SELECT 
                       v.id, 
+                      v.empresa_id,
+                      e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
                       JSON_QUERY(p.perfil_json) AS perfil_completo_json,
@@ -513,6 +819,8 @@ async function migrate() {
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
                   ORDER BY v.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -522,6 +830,8 @@ async function migrate() {
               SELECT (
                   SELECT 
                       v.id, 
+                      v.empresa_id,
+                      e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
                       JSON_QUERY(p.perfil_json) AS perfil_completo_json,
@@ -534,7 +844,8 @@ async function migrate() {
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
-                  WHERE v.estado = 'ACTIVA'
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
+                  WHERE v.estado = 'ACTIVA' AND (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
                   ORDER BY v.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -544,6 +855,8 @@ async function migrate() {
               SELECT (
                   SELECT 
                       v.id, 
+                      v.empresa_id,
+                      e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
                       JSON_QUERY(p.perfil_json) AS perfil_completo_json,
@@ -556,6 +869,7 @@ async function migrate() {
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
                   WHERE v.id = @id
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
@@ -564,11 +878,11 @@ async function migrate() {
           BEGIN
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO vacantes (id, perfil_id, titulo, descripcion, estado, requiere_registro, configuracion_json) 
-              VALUES (@InsertedID, @perfil_id, @titulo, @descripcion, ISNULL(@estado, 'ACTIVA'), ISNULL(@requiere_registro, 1), @configuracion_json);
+              INSERT INTO vacantes (id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro, configuracion_json) 
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @perfil_id, @titulo, @descripcion, ISNULL(@estado, 'ACTIVA'), ISNULL(@requiere_registro, 1), @configuracion_json);
 
               SELECT (
-                  SELECT id, perfil_id, titulo, descripcion, estado, requiere_registro 
+                  SELECT id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro 
                   FROM vacantes 
                   WHERE id = @InsertedID
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
@@ -577,7 +891,8 @@ async function migrate() {
           ELSE IF @ACCION = 'UPDATE'
           BEGIN
               UPDATE vacantes 
-              SET perfil_id = @perfil_id, 
+              SET empresa_id = ISNULL(@empresa_id, empresa_id),
+                  perfil_id = @perfil_id, 
                   titulo = @titulo, 
                   descripcion = @descripcion, 
                   estado = ISNULL(@estado, estado),
@@ -608,6 +923,7 @@ async function migrate() {
           SET NOCOUNT ON;
 
           DECLARE @id UNIQUEIDENTIFIER = NULL;
+          DECLARE @empresa_id VARCHAR(20) = NULL;
           DECLARE @vacante_id UNIQUEIDENTIFIER = NULL;
           DECLARE @candidato_id UNIQUEIDENTIFIER = NULL;
           DECLARE @preguntas_respondidas_json NVARCHAR(MAX) = NULL;
@@ -615,6 +931,7 @@ async function migrate() {
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
+              SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
               SET @vacante_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.vacante_id') AS UNIQUEIDENTIFIER);
               SET @candidato_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.candidato_id') AS UNIQUEIDENTIFIER);
               SET @preguntas_respondidas_json = JSON_QUERY(@DATA_JSON, '$.preguntas_respondidas_json');
@@ -627,6 +944,8 @@ async function migrate() {
                   SELECT 
                       p.id, 
                       p.vacante_id,
+                      v.empresa_id,
+                      e.nombre AS empresa_nombre,
                       p.candidato_id,
                       v.titulo AS vacante_titulo,
                       COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), '') AS nombre_completo, 
@@ -649,7 +968,9 @@ async function migrate() {
                       JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
                   ORDER BY p.fecha_postulacion DESC
                   FOR JSON PATH
               ) AS DATOS;
