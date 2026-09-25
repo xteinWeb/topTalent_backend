@@ -316,6 +316,16 @@ async function migrate() {
                     ALTER TABLE postulaciones ADD preguntas_respondidas_json NVARCHAR(MAX) NULL;
                 END
 
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'respuesta_ia')
+                BEGIN
+                    ALTER TABLE postulaciones ADD respuesta_ia NVARCHAR(MAX) NULL;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'estado_ia')
+                BEGIN
+                    ALTER TABLE postulaciones ADD estado_ia NVARCHAR(MAX) NULL;
+                END
+
                 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'puntuacion_ia')
                 BEGIN
                     ALTER TABLE postulaciones ADD puntuacion_ia INT NULL;
@@ -334,7 +344,7 @@ async function migrate() {
                 END
 
                 -- Delete orphan records if any
-                DELETE FROM postulaciones WHERE candidato_id IS NULL;
+                EXEC('DELETE FROM postulaciones WHERE candidato_id IS NULL');
 
                 -- Find and drop existing foreign key on candidato_id if it exists
                 DECLARE @ConstraintName NVARCHAR(200) = NULL;
@@ -351,10 +361,10 @@ async function migrate() {
                 END
 
                 -- Alter column to NOT NULL
-                ALTER TABLE postulaciones ALTER COLUMN candidato_id UNIQUEIDENTIFIER NOT NULL;
+                EXEC('ALTER TABLE postulaciones ALTER COLUMN candidato_id UNIQUEIDENTIFIER NOT NULL');
 
                 -- Add new Foreign Key with CASCADE
-                ALTER TABLE postulaciones ADD CONSTRAINT FK_postulaciones_candidatos FOREIGN KEY (candidato_id) REFERENCES candidatos(id) ON DELETE CASCADE;
+                EXEC('ALTER TABLE postulaciones ADD CONSTRAINT FK_postulaciones_candidatos FOREIGN KEY (candidato_id) REFERENCES candidatos(id) ON DELETE CASCADE');
             `;
             await pool.request().query(alterPostulacionesQuery);
         }
