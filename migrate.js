@@ -952,8 +952,8 @@ async function migrate() {
           END
           ELSE IF @ACCION = 'DELETE'
           BEGIN
-              DELETE FROM vacantes WHERE id = @id;
-              SELECT '{"message": "Vacante eliminada exitosamente"}' AS DATOS;
+              UPDATE vacantes SET estado = 'INACTIVA', fecha_actualizacion = GETDATE() WHERE id = @id;
+              SELECT '{"message": "Vacante inactivada exitosamente"}' AS DATOS;
           END
       END;
     `);

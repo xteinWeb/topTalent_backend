@@ -116,10 +116,10 @@ exports.create = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
-        perfil_id, 
-        titulo, 
-        descripcion, 
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        perfil_id,
+        titulo,
+        descripcion,
         estado,
         requiere_registro: requiere_registro === undefined ? 1 : (requiere_registro ? 1 : 0),
         configuracion_json: typeof configuracion_json === 'object' ? JSON.stringify(configuracion_json) : configuracion_json
@@ -164,11 +164,11 @@ exports.update = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'UPDATE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
-        id, 
-        perfil_id, 
-        titulo, 
-        descripcion, 
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        id,
+        perfil_id,
+        titulo,
+        descripcion,
         estado,
         requiere_registro: requiere_registro === undefined ? 1 : (requiere_registro ? 1 : 0),
         configuracion_json: typeof configuracion_json === 'object' ? JSON.stringify(configuracion_json) : configuracion_json
@@ -208,7 +208,7 @@ exports.delete = async (req, res) => {
           refresh = process.env.NEWTOKEN;
 
         res.json({
-          message: 'Vacante eliminada exitosamente',
+          message: 'Vacante inactivada exitosamente',
           token: refresh,
         });
       })
