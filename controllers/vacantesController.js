@@ -208,7 +208,7 @@ exports.delete = async (req, res) => {
           refresh = process.env.NEWTOKEN;
 
         res.json({
-          message: 'Vacante inactivada exitosamente',
+          message: 'Vacante eliminada exitosamente',
           token: refresh,
         });
       })

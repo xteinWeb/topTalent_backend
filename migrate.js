@@ -867,7 +867,7 @@ async function migrate() {
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
-                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id) AND v.estado != 'ELIMINADA'
                   ORDER BY v.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -952,8 +952,8 @@ async function migrate() {
           END
           ELSE IF @ACCION = 'DELETE'
           BEGIN
-              UPDATE vacantes SET estado = 'INACTIVA', fecha_actualizacion = GETDATE() WHERE id = @id;
-              SELECT '{"message": "Vacante inactivada exitosamente"}' AS DATOS;
+              UPDATE vacantes SET estado = 'ELIMINADA', fecha_actualizacion = GETDATE() WHERE id = @id;
+              SELECT '{"message": "Vacante eliminada exitosamente"}' AS DATOS;
           END
       END;
     `);
