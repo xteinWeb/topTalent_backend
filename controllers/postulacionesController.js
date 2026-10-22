@@ -5,6 +5,8 @@ const fs = require('fs');
 const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
 const { Packer } = require('docx');
 const { generateHojaVidaCorporativaDocx } = require('../utils/docxGenerator');
+const mailer = require('../utils/mailer');
+const { esEstadoValido } = require('./estadosPostulacionController');
 
 const LOGO_PATH = path.join(__dirname, '../assets/logo-artdecon.png');
 
@@ -416,6 +418,41 @@ exports.create = async (req, res) => {
   }
 };
 
+function parsePostulacionJSON(p) {
+  if (!p || typeof p !== 'object') return p;
+  if (p.respuesta_ia && typeof p.respuesta_ia === 'string') {
+    try { p.respuesta_ia = JSON.parse(p.respuesta_ia); } catch (e) {}
+  }
+  if (p.json_analisis_ia && typeof p.json_analisis_ia === 'string') {
+    try { p.json_analisis_ia = JSON.parse(p.json_analisis_ia); } catch (e) {}
+  }
+  if (p.cita_entrevista_json && typeof p.cita_entrevista_json === 'string') {
+    try { p.cita_entrevista_json = JSON.parse(p.cita_entrevista_json); } catch (e) {}
+  }
+  if (p.evaluacion_entrevista_json && typeof p.evaluacion_entrevista_json === 'string') {
+    try { p.evaluacion_entrevista_json = JSON.parse(p.evaluacion_entrevista_json); } catch (e) {}
+  }
+  if (p.experiencias_json && typeof p.experiencias_json === 'string') {
+    try { p.experiencias_json = JSON.parse(p.experiencias_json); } catch (e) {}
+  }
+  if (p.estudios_json && typeof p.estudios_json === 'string') {
+    try { p.estudios_json = JSON.parse(p.estudios_json); } catch (e) {}
+  }
+  if (p.idiomas_json && typeof p.idiomas_json === 'string') {
+    try { p.idiomas_json = JSON.parse(p.idiomas_json); } catch (e) {}
+  }
+  if (p.habilidades_json && typeof p.habilidades_json === 'string') {
+    try { p.habilidades_json = JSON.parse(p.habilidades_json); } catch (e) {}
+  }
+  if (p.preguntas_respondidas && typeof p.preguntas_respondidas === 'string') {
+    try { p.preguntas_respondidas = JSON.parse(p.preguntas_respondidas); } catch (e) {}
+  }
+  if (p.perfil_profesional && typeof p.perfil_profesional === 'string') {
+    try { p.perfil_profesional = JSON.parse(p.perfil_profesional); } catch (e) {}
+  }
+  return p;
+}
+
 // GET all job applications (Admin)
 exports.getAll = async (req, res) => {
   try {
@@ -435,6 +472,10 @@ exports.getAll = async (req, res) => {
           parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : [];
         } catch (e) {
           parsedData = recordSet.recordset[0]["DATOS"];
+        }
+
+        if (Array.isArray(parsedData)) {
+          parsedData = parsedData.map(parsePostulacionJSON);
         }
 
         res.json({
@@ -470,6 +511,10 @@ exports.getByVacante = async (req, res) => {
           parsedData = recordSet.recordset[0]["DATOS"] ? JSON.parse(recordSet.recordset[0]["DATOS"]) : [];
         } catch (e) {
           parsedData = recordSet.recordset[0]["DATOS"];
+        }
+
+        if (Array.isArray(parsedData)) {
+          parsedData = parsedData.map(parsePostulacionJSON);
         }
 
         res.json({
@@ -589,3 +634,190 @@ exports.downloadFile = (req, res) => {
     res.status(404).json({ error: 'Archivo no encontrado' });
   }
 };
+
+// PUT change applicant recruitment lifecycle status
+exports.cambiarEstado = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { estado_postulante } = req.body;
+
+    if (!estado_postulante || typeof estado_postulante !== 'string') {
+      return res.status(400).json({ error: 'El estado es obligatorio.' });
+    }
+
+    const valido = await esEstadoValido(estado_postulante.trim());
+    if (!valido) {
+      return res.status(400).json({
+        error: `Estado inválido o inactivo en el catálogo de base de datos: "${estado_postulante}".`
+      });
+    }
+
+    const pool = await poolPromise;
+    await pool.request()
+      .input('ACCION', sql.VarChar(50), 'CAMBIAR_ESTADO_POSTULANTE')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, estado_postulante }))
+      .execute('spPostulaciones');
+
+    res.json({
+      message: `Estado actualizado a "${estado_postulante}" exitosamente.`
+    });
+  } catch (err) {
+    console.error('Error al cambiar estado de postulante:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST schedule an interview with Google Calendar & WhatsApp integration
+exports.agendarEntrevista = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      fecha, // 'YYYY-MM-DD'
+      hora, // 'HH:mm'
+      duracion_minutos = 60,
+      modalidad = 'Presencial',
+      ubicacion_o_enlace = '',
+      entrevistador = '',
+      notas = '',
+      enviar_email = true,
+      candidato_nombre = '',
+      candidato_correo = '',
+      candidato_telefono = '',
+      vacante_titulo = ''
+    } = req.body;
+
+    if (!fecha || !hora) {
+      return res.status(400).json({ error: 'La fecha y hora de la entrevista son obligatorias.' });
+    }
+
+    // Calculate start & end datetime in ISO formatted for Google Calendar
+    const [year, month, day] = fecha.split('-').map(Number);
+    const [hours, minutes] = hora.split(':').map(Number);
+    const startDate = new Date(year, month - 1, day, hours, minutes);
+    const endDate = new Date(startDate.getTime() + (duracion_minutos || 60) * 60000);
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const formatGCalDate = (d) => {
+      return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`;
+    };
+
+    const gcalStart = formatGCalDate(startDate);
+    const gcalEnd = formatGCalDate(endDate);
+
+    const gcalTitle = `Entrevista Laboral - ${vacante_titulo || 'Artdecon'}: ${candidato_nombre || 'Candidato'}`;
+    const gcalDetails = `Entrevista para el cargo de ${vacante_titulo || 'la vacante'}.\nModalidad: ${modalidad}\nEntrevistador(a): ${entrevistador || 'Gestión Humana'}\nIndicaciones: ${notas || 'Presentar documento de identidad original.'}`;
+    const gcalLocation = ubicacion_o_enlace || 'Sede Principal Artdecon';
+
+    const googleCalendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(gcalTitle)}&dates=${gcalStart}/${gcalEnd}&details=${encodeURIComponent(gcalDetails)}&location=${encodeURIComponent(gcalLocation)}`;
+
+    // Format WhatsApp message
+    let cleanPhone = String(candidato_telefono || '').replace(/\D/g, '');
+    if (cleanPhone.length === 10) {
+      cleanPhone = `57${cleanPhone}`;
+    }
+    const whatsappMessage = `Hola ${candidato_nombre || ''}, te saludamos del departamento de Gestión y Talento Humano de Artdecon. Te confirmamos tu citación a entrevista para la vacante *${vacante_titulo || 'de empleo'}* el día *${fecha}* a las *${hora}* (Modalidad: *${modalidad}*). Lugar/Enlace: ${ubicacion_o_enlace || 'Sede Principal'}. Por favor confírmanos tu asistencia. ¡Muchos éxitos!`;
+    const whatsappUrl = cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(whatsappMessage)}` : null;
+
+    const appointmentPayload = {
+      fecha,
+      hora,
+      duracion_minutos: duracion_minutos || 60,
+      modalidad,
+      ubicacion_o_enlace,
+      entrevistador,
+      notas,
+      google_calendar_url: googleCalendarUrl,
+      whatsapp_url: whatsappUrl,
+      fecha_agendamiento: new Date().toISOString()
+    };
+
+    const pool = await poolPromise;
+    await pool.request()
+      .input('ACCION', sql.VarChar(50), 'AGENDAR_ENTREVISTA')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        id,
+        cita_entrevista_json: JSON.stringify(appointmentPayload)
+      }))
+      .execute('spPostulaciones');
+
+    let emailSent = false;
+    if (enviar_email && candidato_correo) {
+      try {
+        await mailer.sendInterviewInvitationEmail(
+          candidato_correo,
+          candidato_nombre,
+          vacante_titulo,
+          appointmentPayload,
+          googleCalendarUrl
+        );
+        emailSent = true;
+      } catch (mailErr) {
+        console.warn('No se pudo enviar el correo de citación:', mailErr.message);
+      }
+    }
+
+    res.json({
+      message: 'Entrevista agendada exitosamente.',
+      data: {
+        appointment: appointmentPayload,
+        google_calendar_url: googleCalendarUrl,
+        whatsapp_url: whatsappUrl,
+        whatsapp_message: whatsappMessage,
+        email_sent: emailSent
+      }
+    });
+  } catch (err) {
+    console.error('Error al agendar entrevista:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST save psychological interview record & competency evaluation matrix (FOR-TH-001)
+exports.guardarEvaluacion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      impresion_general,
+      concepto_psicologico,
+      matriz_competencias,
+      promedio_competencias,
+      disponibilidad_ingreso,
+      aspiracion_salarial,
+      decision_final,
+      evaluador_nombre,
+      observaciones_adicionales
+    } = req.body;
+
+    const evaluationPayload = {
+      impresion_general: impresion_general || '',
+      concepto_psicologico: concepto_psicologico || '',
+      matriz_competencias: matriz_competencias || [],
+      promedio_competencias: promedio_competencias || 0,
+      disponibilidad_ingreso: disponibilidad_ingreso || '',
+      aspiracion_salarial: aspiracion_salarial || '',
+      decision_final: decision_final || 'Con observaciones',
+      evaluador_nombre: evaluador_nombre || '',
+      observaciones_adicionales: observaciones_adicionales || '',
+      fecha_evaluacion: new Date().toISOString()
+    };
+
+    const pool = await poolPromise;
+    await pool.request()
+      .input('ACCION', sql.VarChar(50), 'GUARDAR_EVALUACION_ENTREVISTA')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        id,
+        evaluacion_entrevista_json: JSON.stringify(evaluationPayload),
+        estado_postulante: decision_final || null
+      }))
+      .execute('spPostulaciones');
+
+    res.json({
+      message: 'Evaluación y expediente de entrevista FOR-TH-001 guardados exitosamente.',
+      data: evaluationPayload
+    });
+  } catch (err) {
+    console.error('Error al guardar evaluación de entrevista:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+

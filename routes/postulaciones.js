@@ -13,6 +13,15 @@ router.get('/', postulacionesController.getAll);
 // Admin endpoint to view candidates by vacancy
 router.get('/vacante/:vacanteId', postulacionesController.getByVacante);
 
+// Admin endpoint to change applicant recruitment state
+router.put('/:id/estado', postulacionesController.cambiarEstado);
+
+// Admin endpoint to schedule an interview (Google Calendar + WhatsApp + Email)
+router.post('/:id/agendar-entrevista', postulacionesController.agendarEntrevista);
+
+// Admin endpoint to record psychological interview & competency matrix evaluation (FOR-TH-001)
+router.post('/:id/evaluacion', postulacionesController.guardarEvaluacion);
+
 // Admin endpoint to trigger the second-pass AI validation workflow for a vacancy
 router.post('/vacante/:vacanteId/validar', postulacionesController.ejecutarValidacion);
 

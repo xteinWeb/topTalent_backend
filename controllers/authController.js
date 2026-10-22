@@ -48,7 +48,8 @@ exports.login = async (req, res) => {
             email: parsedData.email,
             empresa_id: parsedData.empresa_id,
             empresa_nombre: parsedData.empresa_nombre,
-            role: parsedData.rol || 'Administrator'
+            role: parsedData.rol || 'Administrator',
+            area: parsedData.area || ''
           }
         });
       })

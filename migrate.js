@@ -1,5 +1,6 @@
 const { sql, poolPromise } = require('./config/db');
 const bcrypt = require('bcryptjs');
+const { migrateEstadosPostulacion } = require('./migrations/estadosPostulacion');
 
 async function migrate() {
     try {
@@ -57,7 +58,8 @@ async function migrate() {
           username NVARCHAR(100) UNIQUE NOT NULL,
           email NVARCHAR(250) NULL,
           password_hash NVARCHAR(MAX) NOT NULL,
-          rol NVARCHAR(50) DEFAULT 'ADMIN' NOT NULL,
+          rol NVARCHAR(50) DEFAULT 'SUPERADMIN' NOT NULL,
+          area NVARCHAR(150) NULL,
           activo BIT DEFAULT 1 NOT NULL,
           fecha_creacion DATETIME2 DEFAULT GETDATE(),
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
@@ -66,25 +68,46 @@ async function migrate() {
             await pool.request().query(createUsuariosAdminQuery);
             console.log('Table "usuarios_admin" created successfully.');
         } else {
-            console.log('Table "usuarios_admin" already exists.');
+            console.log('Table "usuarios_admin" already exists. Checking columns...');
+            const alterUsuariosColsQuery = `
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'usuarios_admin' AND COLUMN_NAME = 'area')
+                BEGIN
+                    ALTER TABLE usuarios_admin ADD area NVARCHAR(150) NULL;
+                END
+            `;
+            await pool.request().query(alterUsuariosColsQuery);
         }
 
-        // Seed initial admin user for company '00'
-        const checkAdminUser = await pool.request().query("SELECT COUNT(*) AS total FROM usuarios_admin WHERE username = 'admin'");
-        if (checkAdminUser.recordset[0].total === 0) {
-            const defaultPasswordHash = await bcrypt.hash('admin123', 10);
-            await pool.request()
-                .input('empresa_id', sql.VarChar(20), '00')
-                .input('nombre', sql.NVarChar(150), 'Administrador Artdecon')
-                .input('username', sql.NVarChar(100), 'admin')
-                .input('email', sql.NVarChar(250), 'admin@artdecon.com')
-                .input('password_hash', sql.NVarChar(sql.MAX), defaultPasswordHash)
-                .input('rol', sql.NVarChar(50), 'ADMIN')
-                .query(`
-                    INSERT INTO usuarios_admin (empresa_id, nombre, username, email, password_hash, rol, activo)
-                    VALUES (@empresa_id, @nombre, @username, @email, @password_hash, @rol, 1)
-                `);
-            console.log('Usuario admin inicial (username: admin / pass: admin123) creado para empresa 00.');
+        // Seed initial users for company '00' for role testing
+        const seedUsers = [
+            { username: 'admin', nombre: 'Administrador Artdecon', email: 'admin@artdecon.com', rol: 'SUPERADMIN', pass: 'admin123', area: 'Dirección' },
+            { username: 'gerencia', nombre: 'Gerencia General', email: 'gerencia@artdecon.com', rol: 'GERENCIA', pass: 'gerencia123', area: 'Gerencia' },
+            { username: 'talento', nombre: 'Evelyn Alfaro (Talento Humano)', email: 'talento@artdecon.com', rol: 'TALENTO_HUMANO', pass: 'talento123', area: 'Talento Humano' },
+            { username: 'lider.planta', nombre: 'Líder Planta y Mantenimiento', email: 'lider.planta@artdecon.com', rol: 'LIDER_AREA', pass: 'lider123', area: 'Planta y Operaciones' },
+            { username: 'lider.comercial', nombre: 'Líder Comercial', email: 'lider.comercial@artdecon.com', rol: 'LIDER_AREA', pass: 'lider123', area: 'Comercial' }
+        ];
+
+        for (const u of seedUsers) {
+            const checkUser = await pool.request()
+                .input('username', sql.NVarChar(100), u.username)
+                .query("SELECT COUNT(*) AS total FROM usuarios_admin WHERE username = @username");
+
+            if (checkUser.recordset[0].total === 0) {
+                const passHash = await bcrypt.hash(u.pass, 10);
+                await pool.request()
+                    .input('empresa_id', sql.VarChar(20), '00')
+                    .input('nombre', sql.NVarChar(150), u.nombre)
+                    .input('username', sql.NVarChar(100), u.username)
+                    .input('email', sql.NVarChar(250), u.email)
+                    .input('password_hash', sql.NVarChar(sql.MAX), passHash)
+                    .input('rol', sql.NVarChar(50), u.rol)
+                    .input('area', sql.NVarChar(150), u.area)
+                    .query(`
+                        INSERT INTO usuarios_admin (empresa_id, nombre, username, email, password_hash, rol, area, activo)
+                        VALUES (@empresa_id, @nombre, @username, @email, @password_hash, @rol, @area, 1)
+                    `);
+                console.log(`Usuario ${u.username} (${u.rol}) creado exitosamente.`);
+            }
         }
 
         // 1. Create perfiles_cargo table if not exists
@@ -114,6 +137,10 @@ async function migrate() {
                 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'perfiles_cargo' AND COLUMN_NAME = 'empresa_id')
                 BEGIN
                     ALTER TABLE perfiles_cargo ADD empresa_id VARCHAR(20) DEFAULT '00' NOT NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'perfiles_cargo' AND COLUMN_NAME = 'matriz_competencias_json')
+                BEGIN
+                    ALTER TABLE perfiles_cargo ADD matriz_competencias_json NVARCHAR(MAX) NULL;
                 END
                 EXEC('UPDATE perfiles_cargo SET empresa_id = ''00'' WHERE empresa_id IS NULL');
                 IF NOT EXISTS (
@@ -146,6 +173,18 @@ async function migrate() {
           estado NVARCHAR(50) DEFAULT 'ACTIVA',
           requiere_registro BIT DEFAULT 1 NOT NULL,
           configuracion_json NVARCHAR(MAX) NULL,
+          solicitado_por_id UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES usuarios_admin(id),
+          autorizado_por_id UNIQUEIDENTIFIER NULL FOREIGN KEY REFERENCES usuarios_admin(id),
+          estado_aprobacion NVARCHAR(50) DEFAULT 'APROBADO' NOT NULL,
+          observaciones_aprobacion NVARCHAR(MAX) NULL,
+          tipo_requerimiento NVARCHAR(50) DEFAULT 'CARGO_NUEVO' NOT NULL,
+          nombre_reemplaza NVARCHAR(200) NULL,
+          seccion_area NVARCHAR(150) NULL,
+          salario_min DECIMAL(18,2) NULL,
+          salario_max DECIMAL(18,2) NULL,
+          perfil_oculto_json NVARCHAR(MAX) NULL,
+          fecha_solicitud DATETIME2 DEFAULT GETDATE(),
+          fecha_autorizacion DATETIME2 NULL,
           fecha_creacion DATETIME2 DEFAULT GETDATE(),
           fecha_actualizacion DATETIME2 DEFAULT GETDATE()
         );
@@ -176,6 +215,54 @@ async function migrate() {
                 IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'configuracion_json')
                 BEGIN
                     ALTER TABLE vacantes ADD configuracion_json NVARCHAR(MAX) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'solicitado_por_id')
+                BEGIN
+                    ALTER TABLE vacantes ADD solicitado_por_id UNIQUEIDENTIFIER NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'autorizado_por_id')
+                BEGIN
+                    ALTER TABLE vacantes ADD autorizado_por_id UNIQUEIDENTIFIER NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'estado_aprobacion')
+                BEGIN
+                    ALTER TABLE vacantes ADD estado_aprobacion NVARCHAR(50) DEFAULT 'APROBADO' NOT NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'observaciones_aprobacion')
+                BEGIN
+                    ALTER TABLE vacantes ADD observaciones_aprobacion NVARCHAR(MAX) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'tipo_requerimiento')
+                BEGIN
+                    ALTER TABLE vacantes ADD tipo_requerimiento NVARCHAR(50) DEFAULT 'CARGO_NUEVO' NOT NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'nombre_reemplaza')
+                BEGIN
+                    ALTER TABLE vacantes ADD nombre_reemplaza NVARCHAR(200) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'seccion_area')
+                BEGIN
+                    ALTER TABLE vacantes ADD seccion_area NVARCHAR(150) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'salario_min')
+                BEGIN
+                    ALTER TABLE vacantes ADD salario_min DECIMAL(18,2) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'salario_max')
+                BEGIN
+                    ALTER TABLE vacantes ADD salario_max DECIMAL(18,2) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'perfil_oculto_json')
+                BEGIN
+                    ALTER TABLE vacantes ADD perfil_oculto_json NVARCHAR(MAX) NULL;
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'fecha_solicitud')
+                BEGIN
+                    ALTER TABLE vacantes ADD fecha_solicitud DATETIME2 DEFAULT GETDATE();
+                END
+                IF NOT EXISTS (SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'vacantes' AND COLUMN_NAME = 'fecha_autorizacion')
+                BEGIN
+                    ALTER TABLE vacantes ADD fecha_autorizacion DATETIME2 NULL;
                 END
             `;
             await pool.request().query(addColsQuery);
@@ -255,7 +342,10 @@ async function migrate() {
           puntuacion_ia INT NULL,
           json_analisis_ia NVARCHAR(MAX) NULL,
           posicion INT NULL,
-          segunda_validacion BIT NULL
+          segunda_validacion BIT NULL,
+          estado_postulante NVARCHAR(50) DEFAULT 'Postulado' NOT NULL,
+          cita_entrevista_json NVARCHAR(MAX) NULL,
+          evaluacion_entrevista_json NVARCHAR(MAX) NULL
         );
       `;
             await pool.request().query(createPostulacionesQuery);
@@ -341,6 +431,18 @@ async function migrate() {
                 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'segunda_validacion')
                 BEGIN
                     ALTER TABLE postulaciones ADD segunda_validacion BIT NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'estado_postulante')
+                BEGIN
+                    ALTER TABLE postulaciones ADD estado_postulante NVARCHAR(50) DEFAULT 'Postulado' NOT NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'cita_entrevista_json')
+                BEGIN
+                    ALTER TABLE postulaciones ADD cita_entrevista_json NVARCHAR(MAX) NULL;
+                END
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'postulaciones' AND COLUMN_NAME = 'evaluacion_entrevista_json')
+                BEGIN
+                    ALTER TABLE postulaciones ADD evaluacion_entrevista_json NVARCHAR(MAX) NULL;
                 END
 
                 -- Delete orphan records if any
@@ -491,6 +593,11 @@ async function migrate() {
     `);
         console.log('Procedure "spCatalogos" created/updated.');
 
+        // 3.6 Catálogo dinámico de estados de postulación (tabla + semilla + spEstadosPostulacion)
+        console.log('Creating/Updating estados_postulacion...');
+        await migrateEstadosPostulacion(pool);
+        console.log('Tabla "estados_postulacion" y procedure "spEstadosPostulacion" listos.');
+
         // Create/Update spEmpresas
         console.log('Creating/Updating Stored Procedure spEmpresas...');
         await pool.request().query(`
@@ -579,6 +686,7 @@ async function migrate() {
           DECLARE @nombre NVARCHAR(150) = NULL;
           DECLARE @password_hash NVARCHAR(MAX) = NULL;
           DECLARE @rol NVARCHAR(50) = NULL;
+          DECLARE @area NVARCHAR(150) = NULL;
           DECLARE @activo BIT = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
@@ -590,6 +698,7 @@ async function migrate() {
               SET @nombre = JSON_VALUE(@DATA_JSON, '$.nombre');
               SET @password_hash = JSON_VALUE(@DATA_JSON, '$.password_hash');
               SET @rol = JSON_VALUE(@DATA_JSON, '$.rol');
+              SET @area = JSON_VALUE(@DATA_JSON, '$.area');
               SET @activo = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.activo') AS BIT);
           END
 
@@ -605,6 +714,7 @@ async function migrate() {
                       u.email, 
                       u.password_hash, 
                       u.rol, 
+                      u.area,
                       u.activo
                   FROM usuarios_admin u
                   INNER JOIN empresas e ON u.empresa_id = e.id
@@ -626,6 +736,7 @@ async function migrate() {
                       u.email, 
                       u.password_hash, 
                       u.rol, 
+                      u.area,
                       u.activo,
                       u.fecha_creacion,
                       u.fecha_actualizacion
@@ -646,6 +757,7 @@ async function migrate() {
                       u.username, 
                       u.email, 
                       u.rol, 
+                      u.area,
                       u.activo,
                       u.fecha_creacion,
                       u.fecha_actualizacion
@@ -665,11 +777,11 @@ async function migrate() {
 
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO usuarios_admin (id, empresa_id, nombre, username, email, password_hash, rol, activo)
-              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @nombre, @username, @email, @password_hash, ISNULL(@rol, 'ADMIN'), ISNULL(@activo, 1));
+              INSERT INTO usuarios_admin (id, empresa_id, nombre, username, email, password_hash, rol, area, activo)
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @nombre, @username, @email, @password_hash, ISNULL(@rol, 'SUPERADMIN'), @area, ISNULL(@activo, 1));
 
               SELECT (
-                  SELECT u.id, u.empresa_id, e.nombre AS empresa_nombre, u.nombre, u.username, u.email, u.rol
+                  SELECT u.id, u.empresa_id, e.nombre AS empresa_nombre, u.nombre, u.username, u.email, u.rol, u.area
                   FROM usuarios_admin u
                   INNER JOIN empresas e ON u.empresa_id = e.id
                   WHERE u.id = @InsertedID
@@ -683,6 +795,7 @@ async function migrate() {
                   email = ISNULL(@email, email),
                   password_hash = ISNULL(@password_hash, password_hash),
                   rol = ISNULL(@rol, rol),
+                  area = ISNULL(@area, area),
                   activo = ISNULL(@activo, activo),
                   fecha_actualizacion = GETDATE()
               WHERE id = @id;
@@ -696,6 +809,7 @@ async function migrate() {
                       u.username, 
                       u.email, 
                       u.rol, 
+                      u.area,
                       u.activo
                   FROM usuarios_admin u
                   INNER JOIN empresas e ON u.empresa_id = e.id
@@ -722,6 +836,7 @@ async function migrate() {
           DECLARE @area NVARCHAR(150) = NULL;
           DECLARE @cargo NVARCHAR(150) = NULL;
           DECLARE @perfil_json NVARCHAR(MAX) = NULL;
+          DECLARE @matriz_competencias_json NVARCHAR(MAX) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -730,11 +845,10 @@ async function migrate() {
               SET @area = JSON_VALUE(@DATA_JSON, '$.area');
               SET @cargo = JSON_VALUE(@DATA_JSON, '$.cargo');
               SET @perfil_json = JSON_QUERY(@DATA_JSON, '$.perfil_json');
-              
-              IF @perfil_json IS NULL
-              BEGIN
-                  SET @perfil_json = JSON_VALUE(@DATA_JSON, '$.perfil_json');
-              END
+              IF @perfil_json IS NULL SET @perfil_json = JSON_VALUE(@DATA_JSON, '$.perfil_json');
+
+              SET @matriz_competencias_json = JSON_QUERY(@DATA_JSON, '$.matriz_competencias_json');
+              IF @matriz_competencias_json IS NULL SET @matriz_competencias_json = JSON_VALUE(@DATA_JSON, '$.matriz_competencias_json');
           END
 
           IF @ACCION = 'SELECT_ALL'
@@ -743,10 +857,11 @@ async function migrate() {
                   SELECT 
                       p.id, 
                       p.empresa_id,
-                      e.nombre AS empresa_nombre,
+                      e.nombre AS empresa_nombre, 
                       p.area, 
                       p.cargo, 
-                      JSON_QUERY(p.perfil_json) AS perfil_json, 
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_json, 
+                      CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       p.fecha_creacion AS fecha_creacion, 
                       p.fecha_actualizacion AS fecha_actualizacion 
                   FROM perfiles_cargo p
@@ -762,10 +877,11 @@ async function migrate() {
                   SELECT 
                       p.id, 
                       p.empresa_id,
-                      e.nombre AS empresa_nombre,
+                      e.nombre AS empresa_nombre, 
                       p.area, 
                       p.cargo, 
-                      JSON_QUERY(p.perfil_json) AS perfil_json, 
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_json, 
+                      CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       p.fecha_creacion AS fecha_creacion, 
                       p.fecha_actualizacion AS fecha_actualizacion 
                   FROM perfiles_cargo p
@@ -778,15 +894,11 @@ async function migrate() {
           BEGIN
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO perfiles_cargo (id, empresa_id, area, cargo, perfil_json) 
-              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @area, @cargo, @perfil_json);
+              INSERT INTO perfiles_cargo (id, empresa_id, area, cargo, perfil_json, matriz_competencias_json) 
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @area, @cargo, @perfil_json, @matriz_competencias_json);
 
               SELECT (
-                  SELECT 
-                      id, 
-                      empresa_id,
-                      area, 
-                      cargo 
+                  SELECT id, empresa_id, area, cargo 
                   FROM perfiles_cargo 
                   WHERE id = @InsertedID
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
@@ -799,6 +911,7 @@ async function migrate() {
                   area = @area, 
                   cargo = @cargo, 
                   perfil_json = @perfil_json, 
+                  matriz_competencias_json = ISNULL(@matriz_competencias_json, matriz_competencias_json),
                   fecha_actualizacion = GETDATE() 
               WHERE id = @id;
 
@@ -834,6 +947,18 @@ async function migrate() {
           DECLARE @requiere_registro BIT = NULL;
           DECLARE @configuracion_json NVARCHAR(MAX) = NULL;
 
+          -- Campos extendidos Octubre 2026
+          DECLARE @solicitado_por_id UNIQUEIDENTIFIER = NULL;
+          DECLARE @autorizado_por_id UNIQUEIDENTIFIER = NULL;
+          DECLARE @estado_aprobacion NVARCHAR(50) = NULL;
+          DECLARE @observaciones_aprobacion NVARCHAR(MAX) = NULL;
+          DECLARE @tipo_requerimiento NVARCHAR(50) = NULL;
+          DECLARE @nombre_reemplaza NVARCHAR(200) = NULL;
+          DECLARE @seccion_area NVARCHAR(150) = NULL;
+          DECLARE @salario_min DECIMAL(18,2) = NULL;
+          DECLARE @salario_max DECIMAL(18,2) = NULL;
+          DECLARE @perfil_oculto_json NVARCHAR(MAX) = NULL;
+
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
@@ -845,6 +970,18 @@ async function migrate() {
               SET @requiere_registro = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.requiere_registro') AS BIT);
               SET @configuracion_json = JSON_QUERY(@DATA_JSON, '$.configuracion_json');
               IF @configuracion_json IS NULL SET @configuracion_json = JSON_VALUE(@DATA_JSON, '$.configuracion_json');
+
+              SET @solicitado_por_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.solicitado_por_id') AS UNIQUEIDENTIFIER);
+              SET @autorizado_por_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.autorizado_por_id') AS UNIQUEIDENTIFIER);
+              SET @estado_aprobacion = JSON_VALUE(@DATA_JSON, '$.estado_aprobacion');
+              SET @observaciones_aprobacion = JSON_VALUE(@DATA_JSON, '$.observaciones_aprobacion');
+              SET @tipo_requerimiento = JSON_VALUE(@DATA_JSON, '$.tipo_requerimiento');
+              SET @nombre_reemplaza = JSON_VALUE(@DATA_JSON, '$.nombre_reemplaza');
+              SET @seccion_area = JSON_VALUE(@DATA_JSON, '$.seccion_area');
+              SET @salario_min = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.salario_min') AS DECIMAL(18,2));
+              SET @salario_max = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.salario_max') AS DECIMAL(18,2));
+              SET @perfil_oculto_json = JSON_QUERY(@DATA_JSON, '$.perfil_oculto_json');
+              IF @perfil_oculto_json IS NULL SET @perfil_oculto_json = JSON_VALUE(@DATA_JSON, '$.perfil_oculto_json');
           END
 
           IF @ACCION = 'SELECT_ALL'
@@ -856,18 +993,38 @@ async function migrate() {
                       e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
-                      JSON_QUERY(p.perfil_json) AS perfil_completo_json,
+                      p.area AS perfil_area,
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
+                      CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       v.titulo, 
                       v.descripcion, 
                       v.estado, 
                       v.requiere_registro,
                       CASE WHEN ISJSON(v.configuracion_json) = 1 THEN JSON_QUERY(v.configuracion_json) ELSE NULL END AS configuracion_json,
+                      v.solicitado_por_id,
+                      u_sol.nombre AS solicitado_por_nombre,
+                      v.autorizado_por_id,
+                      u_aut.nombre AS autorizado_por_nombre,
+                      ISNULL(v.estado_aprobacion, 'APROBADA') AS estado_aprobacion,
+                      v.observaciones_aprobacion,
+                      v.tipo_requerimiento,
+                      v.nombre_reemplaza,
+                      v.seccion_area,
+                      v.salario_min,
+                      v.salario_max,
+                      CASE WHEN ISJSON(v.perfil_oculto_json) = 1 THEN JSON_QUERY(v.perfil_oculto_json) ELSE NULL END AS perfil_oculto_json,
+                      v.fecha_solicitud,
+                      v.fecha_autorizacion,
                       v.fecha_creacion, 
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
-                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id) AND v.estado != 'ELIMINADA'
+                  LEFT JOIN usuarios_admin u_sol ON v.solicitado_por_id = u_sol.id
+                  LEFT JOIN usuarios_admin u_aut ON v.autorizado_por_id = u_aut.id
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id) 
+                    AND (@solicitado_por_id IS NULL OR v.solicitado_por_id = @solicitado_por_id)
+                    AND v.estado != 'ELIMINADA'
                   ORDER BY v.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -881,19 +1038,63 @@ async function migrate() {
                       e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
-                      JSON_QUERY(p.perfil_json) AS perfil_completo_json,
+                      p.area AS perfil_area,
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
                       v.titulo, 
                       v.descripcion, 
                       v.estado, 
                       v.requiere_registro,
                       CASE WHEN ISJSON(v.configuracion_json) = 1 THEN JSON_QUERY(v.configuracion_json) ELSE NULL END AS configuracion_json,
+                      v.tipo_requerimiento,
+                      v.seccion_area,
+                      v.salario_min,
+                      v.salario_max,
                       v.fecha_creacion, 
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
-                  WHERE v.estado = 'ACTIVA' AND (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
+                  WHERE v.estado = 'ACTIVA' 
+                    AND (v.estado_aprobacion IS NULL OR v.estado_aprobacion IN ('APROBADA', 'Aprobado', 'Aprobado con reservas'))
+                    AND (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
                   ORDER BY v.fecha_actualizacion DESC
+                  FOR JSON PATH
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_SOLICITUDES_PENDIENTES'
+          BEGIN
+              SELECT (
+                  SELECT 
+                      v.id, 
+                      v.empresa_id,
+                      e.nombre AS empresa_nombre,
+                      v.perfil_id,
+                      p.cargo AS perfil_cargo,
+                      p.area AS perfil_area,
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
+                      v.titulo, 
+                      v.descripcion, 
+                      v.estado, 
+                      v.solicitado_por_id,
+                      u_sol.nombre AS solicitado_por_nombre,
+                      v.estado_aprobacion,
+                      v.observaciones_aprobacion,
+                      v.tipo_requerimiento,
+                      v.nombre_reemplaza,
+                      v.seccion_area,
+                      v.salario_min,
+                      v.salario_max,
+                      CASE WHEN ISJSON(v.perfil_oculto_json) = 1 THEN JSON_QUERY(v.perfil_oculto_json) ELSE NULL END AS perfil_oculto_json,
+                      v.fecha_solicitud,
+                      v.fecha_creacion
+                  FROM vacantes v
+                  INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
+                  LEFT JOIN usuarios_admin u_sol ON v.solicitado_por_id = u_sol.id
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
+                    AND v.estado != 'ELIMINADA'
+                    AND v.estado_aprobacion IN ('PENDIENTE', 'Con observaciones', 'Pendiente')
+                  ORDER BY v.fecha_solicitud DESC
                   FOR JSON PATH
               ) AS DATOS;
           END
@@ -906,27 +1107,108 @@ async function migrate() {
                       e.nombre AS empresa_nombre,
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
-                      JSON_QUERY(p.perfil_json) AS perfil_completo_json,
+                      p.area AS perfil_area,
+                      CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
+                      CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       v.titulo, 
                       v.descripcion, 
                       v.estado, 
                       v.requiere_registro,
                       CASE WHEN ISJSON(v.configuracion_json) = 1 THEN JSON_QUERY(v.configuracion_json) ELSE NULL END AS configuracion_json,
+                      v.solicitado_por_id,
+                      u_sol.nombre AS solicitado_por_nombre,
+                      v.autorizado_por_id,
+                      u_aut.nombre AS autorizado_por_nombre,
+                      ISNULL(v.estado_aprobacion, 'APROBADA') AS estado_aprobacion,
+                      v.observaciones_aprobacion,
+                      v.tipo_requerimiento,
+                      v.nombre_reemplaza,
+                      v.seccion_area,
+                      v.salario_min,
+                      v.salario_max,
+                      CASE WHEN ISJSON(v.perfil_oculto_json) = 1 THEN JSON_QUERY(v.perfil_oculto_json) ELSE NULL END AS perfil_oculto_json,
+                      v.fecha_solicitud,
+                      v.fecha_autorizacion,
                       v.fecha_creacion, 
                       v.fecha_actualizacion 
                   FROM vacantes v
                   INNER JOIN perfiles_cargo p ON v.perfil_id = p.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
+                  LEFT JOIN usuarios_admin u_sol ON v.solicitado_por_id = u_sol.id
+                  LEFT JOIN usuarios_admin u_aut ON v.autorizado_por_id = u_aut.id
                   WHERE v.id = @id
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SOLICITAR'
+          BEGIN
+              DECLARE @NewSolicitudID UNIQUEIDENTIFIER = NEWID();
+
+              INSERT INTO vacantes (
+                  id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro, 
+                  configuracion_json, solicitado_por_id, estado_aprobacion, tipo_requerimiento, 
+                  nombre_reemplaza, seccion_area, salario_min, salario_max, perfil_oculto_json, fecha_solicitud
+              ) 
+              VALUES (
+                  @NewSolicitudID, ISNULL(@empresa_id, '00'), @perfil_id, @titulo, @descripcion, 
+                  'INACTIVA', ISNULL(@requiere_registro, 1), @configuracion_json, 
+                  @solicitado_por_id, 'PENDIENTE', @tipo_requerimiento, 
+                  @nombre_reemplaza, @seccion_area, @salario_min, @salario_max, @perfil_oculto_json, GETDATE()
+              );
+
+              SELECT (
+                  SELECT id, titulo, estado, estado_aprobacion, fecha_solicitud 
+                  FROM vacantes 
+                  WHERE id = @NewSolicitudID
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'AUTORIZAR'
+          BEGIN
+              UPDATE vacantes 
+              SET estado_aprobacion = @estado_aprobacion,
+                  autorizado_por_id = @autorizado_por_id,
+                  observaciones_aprobacion = @observaciones_aprobacion,
+                  fecha_autorizacion = GETDATE(),
+                  fecha_actualizacion = GETDATE()
+              WHERE id = @id;
+
+              SELECT '{"message": "Solicitud de vacante evaluada exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'ACTIVAR'
+          BEGIN
+              UPDATE vacantes 
+              SET estado = 'ACTIVA', fecha_actualizacion = GETDATE() 
+              WHERE id = @id;
+
+              SELECT '{"message": "Vacante activada exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'DESACTIVAR'
+          BEGIN
+              UPDATE vacantes 
+              SET estado = 'INACTIVA', fecha_actualizacion = GETDATE() 
+              WHERE id = @id;
+
+              SELECT '{"message": "Vacante desactivada exitosamente"}' AS DATOS;
           END
           ELSE IF @ACCION = 'INSERT'
           BEGIN
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO vacantes (id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro, configuracion_json) 
-              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @perfil_id, @titulo, @descripcion, ISNULL(@estado, 'ACTIVA'), ISNULL(@requiere_registro, 1), @configuracion_json);
+              INSERT INTO vacantes (
+                  id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro, 
+                  configuracion_json, solicitado_por_id, autorizado_por_id, estado_aprobacion,
+                  observaciones_aprobacion, tipo_requerimiento, nombre_reemplaza, seccion_area,
+                  salario_min, salario_max, perfil_oculto_json, fecha_solicitud, fecha_autorizacion
+              ) 
+              VALUES (
+                  @InsertedID, ISNULL(@empresa_id, '00'), @perfil_id, @titulo, @descripcion, 
+                  ISNULL(@estado, 'ACTIVA'), ISNULL(@requiere_registro, 1), @configuracion_json,
+                  @solicitado_por_id, @autorizado_por_id, ISNULL(@estado_aprobacion, 'APROBADA'),
+                  @observaciones_aprobacion, @tipo_requerimiento, @nombre_reemplaza, @seccion_area,
+                  @salario_min, @salario_max, @perfil_oculto_json, GETDATE(), 
+                  CASE WHEN @estado_aprobacion IN ('APROBADA', 'Aprobado') THEN GETDATE() ELSE NULL END
+              );
 
               SELECT (
                   SELECT id, empresa_id, perfil_id, titulo, descripcion, estado, requiere_registro 
@@ -945,6 +1227,14 @@ async function migrate() {
                   estado = ISNULL(@estado, estado),
                   requiere_registro = ISNULL(@requiere_registro, requiere_registro),
                   configuracion_json = ISNULL(@configuracion_json, configuracion_json),
+                  tipo_requerimiento = ISNULL(@tipo_requerimiento, tipo_requerimiento),
+                  nombre_reemplaza = ISNULL(@nombre_reemplaza, nombre_reemplaza),
+                  seccion_area = ISNULL(@seccion_area, seccion_area),
+                  salario_min = ISNULL(@salario_min, salario_min),
+                  salario_max = ISNULL(@salario_max, salario_max),
+                  perfil_oculto_json = ISNULL(@perfil_oculto_json, perfil_oculto_json),
+                  estado_aprobacion = ISNULL(@estado_aprobacion, estado_aprobacion),
+                  observaciones_aprobacion = ISNULL(@observaciones_aprobacion, observaciones_aprobacion),
                   fecha_actualizacion = GETDATE() 
               WHERE id = @id;
 
@@ -974,6 +1264,9 @@ async function migrate() {
           DECLARE @vacante_id UNIQUEIDENTIFIER = NULL;
           DECLARE @candidato_id UNIQUEIDENTIFIER = NULL;
           DECLARE @preguntas_respondidas_json NVARCHAR(MAX) = NULL;
+          DECLARE @estado_postulante NVARCHAR(50) = NULL;
+          DECLARE @cita_entrevista_json NVARCHAR(MAX) = NULL;
+          DECLARE @evaluacion_entrevista_json NVARCHAR(MAX) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -983,6 +1276,13 @@ async function migrate() {
               SET @candidato_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.candidato_id') AS UNIQUEIDENTIFIER);
               SET @preguntas_respondidas_json = JSON_QUERY(@DATA_JSON, '$.preguntas_respondidas_json');
               IF @preguntas_respondidas_json IS NULL SET @preguntas_respondidas_json = JSON_VALUE(@DATA_JSON, '$.preguntas_respondidas_json');
+              
+              SET @estado_postulante = JSON_VALUE(@DATA_JSON, '$.estado_postulante');
+              SET @cita_entrevista_json = JSON_QUERY(@DATA_JSON, '$.cita_entrevista_json');
+              IF @cita_entrevista_json IS NULL SET @cita_entrevista_json = JSON_VALUE(@DATA_JSON, '$.cita_entrevista_json');
+
+              SET @evaluacion_entrevista_json = JSON_QUERY(@DATA_JSON, '$.evaluacion_entrevista_json');
+              IF @evaluacion_entrevista_json IS NULL SET @evaluacion_entrevista_json = JSON_VALUE(@DATA_JSON, '$.evaluacion_entrevista_json');
           END
 
           IF @ACCION = 'SELECT_ALL'
@@ -1012,9 +1312,14 @@ async function migrate() {
                       p.posicion,
                       p.segunda_validacion,
                       JSON_QUERY(p.json_analisis_ia) AS json_analisis_ia,
-                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
+                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas,
+                      ISNULL(p.estado_postulante, 'Postulado') AS estado_postulante,
+                      CASE WHEN ISJSON(p.cita_entrevista_json) = 1 THEN JSON_QUERY(p.cita_entrevista_json) ELSE NULL END AS cita_entrevista_json,
+                      CASE WHEN ISJSON(p.evaluacion_entrevista_json) = 1 THEN JSON_QUERY(p.evaluacion_entrevista_json) ELSE NULL END AS evaluacion_entrevista_json,
+                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
+                  INNER JOIN perfiles_cargo pc ON v.perfil_id = pc.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
@@ -1047,9 +1352,14 @@ async function migrate() {
                       p.posicion,
                       p.segunda_validacion,
                       JSON_QUERY(p.json_analisis_ia) AS json_analisis_ia,
-                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas
+                      JSON_QUERY(COALESCE(p.preguntas_respondidas_json, '[]')) AS preguntas_respondidas,
+                      ISNULL(p.estado_postulante, 'Postulado') AS estado_postulante,
+                      CASE WHEN ISJSON(p.cita_entrevista_json) = 1 THEN JSON_QUERY(p.cita_entrevista_json) ELSE NULL END AS cita_entrevista_json,
+                      CASE WHEN ISJSON(p.evaluacion_entrevista_json) = 1 THEN JSON_QUERY(p.evaluacion_entrevista_json) ELSE NULL END AS evaluacion_entrevista_json,
+                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
+                  INNER JOIN perfiles_cargo pc ON v.perfil_id = pc.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE p.vacante_id = @vacante_id
                   ORDER BY p.fecha_postulacion DESC
@@ -1066,19 +1376,45 @@ async function migrate() {
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
               INSERT INTO postulaciones (
-                  id, vacante_id, candidato_id, preguntas_respondidas_json
+                  id, vacante_id, candidato_id, preguntas_respondidas_json, estado_postulante
               )
               VALUES (
-                  @InsertedID, @vacante_id, @candidato_id, @preguntas_respondidas_json
+                  @InsertedID, @vacante_id, @candidato_id, @preguntas_respondidas_json, 'Postulado'
               );
 
               SELECT (
-                  SELECT p.id, p.vacante_id, p.candidato_id, c.email AS correo
+                  SELECT p.id, p.vacante_id, p.candidato_id, c.email AS correo, p.estado_postulante
                   FROM postulaciones p
                   INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE p.id = @InsertedID
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'CAMBIAR_ESTADO_POSTULANTE'
+          BEGIN
+              UPDATE postulaciones 
+              SET estado_postulante = @estado_postulante
+              WHERE id = @id;
+
+              SELECT '{"message": "Estado del postulante actualizado exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'AGENDAR_ENTREVISTA'
+          BEGIN
+              UPDATE postulaciones 
+              SET cita_entrevista_json = @cita_entrevista_json,
+                  estado_postulante = 'Citado a Entrevista'
+              WHERE id = @id;
+
+              SELECT '{"message": "Entrevista agendada exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'GUARDAR_EVALUACION_ENTREVISTA'
+          BEGIN
+              UPDATE postulaciones 
+              SET evaluacion_entrevista_json = @evaluacion_entrevista_json,
+                  estado_postulante = ISNULL(@estado_postulante, estado_postulante)
+              WHERE id = @id;
+
+              SELECT '{"message": "Evaluación de entrevista guardada exitosamente"}' AS DATOS;
           END
       END;
     `);

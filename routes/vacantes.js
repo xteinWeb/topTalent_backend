@@ -7,6 +7,21 @@ const vacantesController = require('../controllers/vacantesController');
 // Public route to get only active vacancies
 router.get('/public', vacantesController.getActive);
 
+// Inbox of vacancy requests pending management approval (Gerencia / Superadmin)
+router.get('/pendientes-autorizacion', vacantesController.getPendientesAutorizacion);
+
+// Area Leader creates a vacancy request (state INACTIVA / PENDIENTE)
+router.post('/solicitar', vacantesController.solicitar);
+
+// Gerencia evaluates approval (Aprobado, Aprobado con reservas, No aprobado, Con observaciones)
+router.put('/:id/autorizar', vacantesController.autorizar);
+
+// Talento Humano activates an approved vacancy
+router.put('/:id/activar', vacantesController.activar);
+
+// Talento Humano pauses/deactivates a vacancy
+router.put('/:id/desactivar', vacantesController.desactivar);
+
 // Admin / Public get single vacancy details
 router.get('/:id', vacantesController.getById);
 

@@ -80,6 +80,18 @@ exports.getAll = async (req, res) => {
           parsedData = recordSet.recordset[0]["DATOS"];
         }
 
+        if (Array.isArray(parsedData)) {
+          parsedData = parsedData.map(p => {
+            if (p.perfil_json && typeof p.perfil_json === 'string') {
+              try { p.perfil_json = JSON.parse(p.perfil_json); } catch (e) {}
+            }
+            if (p.matriz_competencias_json && typeof p.matriz_competencias_json === 'string') {
+              try { p.matriz_competencias_json = JSON.parse(p.matriz_competencias_json); } catch (e) {}
+            }
+            return p;
+          });
+        }
+
         res.json({
           data: parsedData,
           token: refresh,
@@ -119,6 +131,13 @@ exports.getById = async (req, res) => {
           return res.status(404).json({ error: 'Perfil no encontrado' });
         }
 
+        if (parsedData.perfil_json && typeof parsedData.perfil_json === 'string') {
+          try { parsedData.perfil_json = JSON.parse(parsedData.perfil_json); } catch (e) {}
+        }
+        if (parsedData.matriz_competencias_json && typeof parsedData.matriz_competencias_json === 'string') {
+          try { parsedData.matriz_competencias_json = JSON.parse(parsedData.matriz_competencias_json); } catch (e) {}
+        }
+
         res.json({
           data: parsedData,
           token: refresh,
@@ -154,6 +173,13 @@ exports.exportDocx = async (req, res) => {
       return res.status(404).json({ error: 'Perfil no encontrado' });
     }
 
+    if (parsedData.perfil_json && typeof parsedData.perfil_json === 'string') {
+      try { parsedData.perfil_json = JSON.parse(parsedData.perfil_json); } catch (e) {}
+    }
+    if (parsedData.matriz_competencias_json && typeof parsedData.matriz_competencias_json === 'string') {
+      try { parsedData.matriz_competencias_json = JSON.parse(parsedData.matriz_competencias_json); } catch (e) {}
+    }
+
     const doc = generateDocx(parsedData);
     const b64string = await Packer.toBuffer(doc);
 
@@ -170,7 +196,7 @@ exports.exportDocx = async (req, res) => {
 // POST create a new profile
 exports.create = async (req, res) => {
   try {
-    const { area, cargo, perfil_json } = req.body;
+    const { area, cargo, perfil_json, matriz_competencias_json, empresa_id } = req.body;
 
     if (!area || !cargo || !perfil_json) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
@@ -179,7 +205,13 @@ exports.create = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ area, cargo, perfil_json }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+        empresa_id: empresa_id || '00',
+        area, 
+        cargo, 
+        perfil_json,
+        matriz_competencias_json 
+      }))
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
         let refresh = undefined;
@@ -211,7 +243,7 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { area, cargo, perfil_json } = req.body;
+    const { area, cargo, perfil_json, matriz_competencias_json, empresa_id } = req.body;
 
     if (!area || !cargo || !perfil_json) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
@@ -220,7 +252,14 @@ exports.update = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'UPDATE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, area, cargo, perfil_json }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+        id, 
+        empresa_id,
+        area, 
+        cargo, 
+        perfil_json,
+        matriz_competencias_json 
+      }))
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
         let refresh = undefined;
