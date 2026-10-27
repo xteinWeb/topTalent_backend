@@ -1,27 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const perfilesController = require('../controllers/perfilesController');
+const { requireAdmin } = require('../middleware/auth');
+
+// Mounted at /api/perfiles in index.js
+// Lectura: cualquier usuario administrativo. Escritura: Talento Humano (y Superadmin).
 
 // GET all profiles
-// Mounted at /api/perfiles in index.js
-router.get('/', perfilesController.getAll);
+router.get('/', requireAdmin(), perfilesController.getAll);
 
 // GET a single profile by ID
-router.get('/:id', perfilesController.getById);
+router.get('/:id', requireAdmin(), perfilesController.getById);
 
 // GET export profile as DOCX
-router.get('/:id/docx', perfilesController.exportDocx);
+router.get('/:id/docx', requireAdmin(), perfilesController.exportDocx);
 
 // POST generate questions using n8n
-router.post('/generate-questions', perfilesController.generateQuestions);
+router.post('/generate-questions', requireAdmin('TALENTO_HUMANO'), perfilesController.generateQuestions);
 
 // POST create a new profile
-router.post('/', perfilesController.create);
+router.post('/', requireAdmin('TALENTO_HUMANO'), perfilesController.create);
 
 // PUT update a profile
-router.put('/:id', perfilesController.update);
+router.put('/:id', requireAdmin('TALENTO_HUMANO'), perfilesController.update);
 
 // DELETE a profile
-router.delete('/:id', perfilesController.delete);
+router.delete('/:id', requireAdmin('TALENTO_HUMANO'), perfilesController.delete);
 
 module.exports = router;

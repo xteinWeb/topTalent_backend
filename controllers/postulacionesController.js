@@ -6,7 +6,57 @@ const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
 const { Packer } = require('docx');
 const { generateHojaVidaCorporativaDocx } = require('../utils/docxGenerator');
 const mailer = require('../utils/mailer');
-const { esEstadoValido } = require('./estadosPostulacionController');
+const { infoEstado } = require('./estadosPostulacionController');
+const { empresaDelUsuario, esLiderArea, esSuperAdmin } = require('../middleware/auth');
+const { setAttachmentHeader } = require('../utils/http');
+
+// Opción fija al final de la lista de motivos (catálogo MOTIVO_NO_APROBADO); exige detalle en texto libre
+const MOTIVO_OTRO = 'Otro';
+
+// Devuelve { motivo, detalle } para guardar, o { error } si falta o no es válido.
+// Solo los estados marcados con requiere_motivo (p. ej. Descartado, Reserva) lo exigen; en los demás queda vacío.
+async function resolverMotivo(pool, estado, requiereMotivo, body) {
+  if (!requiereMotivo) {
+    return { motivo: null, detalle: null };
+  }
+
+  const motivo = String(body.motivo_no_aprobado || '').trim();
+  const detalle = String(body.motivo_no_aprobado_detalle || '').trim();
+  if (!motivo) {
+    return { error: `Debe indicar el motivo para pasar al candidato a "${estado}".` };
+  }
+
+  if (motivo === MOTIVO_OTRO) {
+    if (!detalle) {
+      return { error: 'Describa el motivo en el campo "Otro".' };
+    }
+    return { motivo, detalle };
+  }
+
+  const result = await pool.request()
+    .input('ACCION', sql.VarChar(50), 'SELECT_BY_TIPO')
+    .input('DATA_JSON', sql.VarChar, JSON.stringify({ tipo: 'MOTIVO_NO_APROBADO' }))
+    .execute('spCatalogos');
+  const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+  const motivosValidos = raw ? JSON.parse(raw).map(m => m.valor) : [];
+  if (!motivosValidos.includes(motivo)) {
+    return { error: `Motivo no válido: "${motivo}".` };
+  }
+  return { motivo, detalle: detalle || null };
+}
+
+async function obtenerPruebaPsicotecnica(pool, postulacionId) {
+  const result = await pool.request()
+    .input('ACCION', sql.VarChar(50), 'SELECT_PRUEBA_PSICOTECNICA')
+    .input('DATA_JSON', sql.VarChar, JSON.stringify({ id: postulacionId }))
+    .execute('spPostulaciones');
+  const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+  return raw ? JSON.parse(raw) : null;
+}
+
+function mismaEmpresa(req, empresaId) {
+  return esSuperAdmin(req.user) || !req.user.empresa_id || req.user.empresa_id === empresaId;
+}
 
 const LOGO_PATH = path.join(__dirname, '../assets/logo-artdecon.png');
 
@@ -48,15 +98,17 @@ async function notificarPostulacionN8N(payload, archivoPath, archivoNombre) {
   }
 }
 
+function destinoUploads(req, file, cb) {
+  const uploadDir = path.join(__dirname, '../uploads');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  cb(null, uploadDir);
+}
+
 // Configure Multer storage
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
+  destination: destinoUploads,
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, 'cv-' + uniqueSuffix + path.extname(file.originalname));
@@ -65,6 +117,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
+  defParamCharset: 'utf8', // nombres de archivo con tildes/ñ (por defecto multer los lee como latin1)
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
     const filetypes = /pdf|docx|doc/;
@@ -95,7 +148,6 @@ exports.create = async (req, res) => {
       estudios_json, 
       idiomas_json,
       habilidades_json,
-      candidato_id,
       preguntas_respondidas_json,
       acepto_tratamiento_datos,
       edad,
@@ -125,10 +177,8 @@ exports.create = async (req, res) => {
     const hv_archivo_ruta = req.file ? req.file.filename : null;
 
     const pool = await poolPromise;
-    let finalCandidatoId = candidato_id;
-    if (finalCandidatoId === 'null' || finalCandidatoId === 'undefined' || !finalCandidatoId) {
-      finalCandidatoId = null;
-    }
+    // La cuenta del candidato sale del token de sesión, nunca de un id enviado en el body
+    let finalCandidatoId = req.user && req.user.tipo === 'candidato' ? req.user.id : null;
 
     if (!finalCandidatoId) {
       // Find candidate by email
@@ -145,6 +195,16 @@ exports.create = async (req, res) => {
       }
 
       if (parsedCandidate) {
+        // Una cuenta verificada tiene dueño: sin su sesión no se permite sobrescribir su perfil ni su hoja de vida
+        if (parsedCandidate.verificado === true || parsedCandidate.verificado === 1) {
+          if (uploadedFileRuta && fs.existsSync(uploadedFileRuta)) {
+            fs.unlinkSync(uploadedFileRuta);
+          }
+          return res.status(401).json({
+            error: 'Ya existe una cuenta registrada con este correo. Inicie sesión como candidato para postularse.',
+            requiere_login: true
+          });
+        }
         finalCandidatoId = parsedCandidate.id;
       } else {
         // Create new candidate
@@ -329,7 +389,7 @@ exports.create = async (req, res) => {
       .input('ACCION', sql.VarChar(50), 'UPDATE_PERFIL')
       .input('DATA_JSON', sql.NVarChar, JSON.stringify({
         id: finalCandidatoId,
-        perfil_completo_json: JSON.stringify(perfilCompletoObj),
+        perfil_completo_json: perfilCompletoObj, // objeto, no texto: el SP lee con JSON_QUERY (texto >4000 caracteres llegaría NULL)
         hv_archivo_nombre: hv_archivo_nombre,
         hv_archivo_ruta: hv_archivo_ruta,
         acepto_tratamiento_datos: aceptaTratamientoDatosAhora,
@@ -343,7 +403,7 @@ exports.create = async (req, res) => {
       .input('DATA_JSON', sql.NVarChar, JSON.stringify({
         vacante_id,
         candidato_id: finalCandidatoId,
-        preguntas_respondidas_json: JSON.stringify(parsedPreguntas)
+        preguntas_respondidas_json: parsedPreguntas
       }))
       .execute('spPostulaciones');
 
@@ -432,6 +492,9 @@ function parsePostulacionJSON(p) {
   if (p.evaluacion_entrevista_json && typeof p.evaluacion_entrevista_json === 'string') {
     try { p.evaluacion_entrevista_json = JSON.parse(p.evaluacion_entrevista_json); } catch (e) {}
   }
+  if (p.prefiltro_json && typeof p.prefiltro_json === 'string') {
+    try { p.prefiltro_json = JSON.parse(p.prefiltro_json); } catch (e) {}
+  }
   if (p.experiencias_json && typeof p.experiencias_json === 'string') {
     try { p.experiencias_json = JSON.parse(p.experiencias_json); } catch (e) {}
   }
@@ -456,11 +519,16 @@ function parsePostulacionJSON(p) {
 // GET all job applications (Admin)
 exports.getAll = async (req, res) => {
   try {
-    const empresa_id = req.query.empresa_id || req.headers['x-empresa-id'] || null;
+    const empresa_id = empresaDelUsuario(req);
+    const payload = {};
+    if (empresa_id) payload.empresa_id = empresa_id;
+    // Un líder de área solo ve los candidatos de sus vacantes
+    if (esLiderArea(req.user)) payload.lider_id = req.user.id;
+
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'SELECT_ALL')
-      .input('DATA_JSON', sql.VarChar, empresa_id ? JSON.stringify({ empresa_id }) : null)
+      .input('DATA_JSON', sql.VarChar, Object.keys(payload).length > 0 ? JSON.stringify(payload) : null)
       .execute('spPostulaciones')
       .then(function (recordSet) {
         let refresh = undefined;
@@ -499,7 +567,10 @@ exports.getByVacante = async (req, res) => {
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'SELECT_BY_VACANTE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ vacante_id: vacanteId }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        vacante_id: vacanteId,
+        lider_id: esLiderArea(req.user) ? req.user.id : undefined
+      }))
       .execute('spPostulaciones')
       .then(function (recordSet) {
         let refresh = undefined;
@@ -613,7 +684,7 @@ exports.exportHojaVidaCorporativaDocx = async (req, res) => {
 
     const fileName = `HOJA_DE_VIDA_${(perfil.nombre_completo || candidato.email || 'CANDIDATO').toUpperCase().replace(/\s+/g, '_')}.docx`;
 
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    setAttachmentHeader(res, fileName);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.send(buffer);
   } catch (err) {
@@ -645,17 +716,28 @@ exports.cambiarEstado = async (req, res) => {
       return res.status(400).json({ error: 'El estado es obligatorio.' });
     }
 
-    const valido = await esEstadoValido(estado_postulante.trim());
-    if (!valido) {
+    const estado = await infoEstado(estado_postulante.trim());
+    if (!estado.existe) {
       return res.status(400).json({
         error: `Estado inválido o inactivo en el catálogo de base de datos: "${estado_postulante}".`
       });
     }
 
     const pool = await poolPromise;
+    const motivo = await resolverMotivo(pool, estado_postulante, estado.requiereMotivo, req.body);
+    if (motivo.error) {
+      return res.status(400).json({ error: motivo.error });
+    }
+
     await pool.request()
       .input('ACCION', sql.VarChar(50), 'CAMBIAR_ESTADO_POSTULANTE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, estado_postulante }))
+      .input('DATA_JSON', sql.NVarChar, JSON.stringify({
+        id,
+        estado_postulante,
+        motivo_no_aprobado: motivo.motivo,
+        motivo_no_aprobado_detalle: motivo.detalle,
+        usuario_id: req.user.id // queda en el historial de estados
+      }))
       .execute('spPostulaciones');
 
     res.json({
@@ -736,7 +818,7 @@ exports.agendarEntrevista = async (req, res) => {
       .input('ACCION', sql.VarChar(50), 'AGENDAR_ENTREVISTA')
       .input('DATA_JSON', sql.VarChar, JSON.stringify({
         id,
-        cita_entrevista_json: JSON.stringify(appointmentPayload)
+        cita_entrevista_json: appointmentPayload
       }))
       .execute('spPostulaciones');
 
@@ -785,10 +867,25 @@ exports.guardarEvaluacion = async (req, res) => {
       aspiracion_salarial,
       decision_final,
       evaluador_nombre,
-      observaciones_adicionales
+      observaciones_adicionales,
+      fortalezas_clave,
+      oportunidades_mejora,
+      ajuste_cultural,
+      respuestas_star,
+      formato,
+      grupo_cargo,
+      brechas
     } = req.body;
 
     const evaluationPayload = {
+      // 'matriz_v1' = evaluada con la matriz de competencias del grupo de cargo (ponderada por peso)
+      formato: formato || null,
+      grupo_cargo: grupo_cargo || null,
+      brechas: Number(brechas) || 0,
+      fortalezas_clave: fortalezas_clave || '',
+      oportunidades_mejora: oportunidades_mejora || '',
+      ajuste_cultural: ajuste_cultural || '',
+      respuestas_star: respuestas_star && typeof respuestas_star === 'object' ? respuestas_star : {},
       impresion_general: impresion_general || '',
       concepto_psicologico: concepto_psicologico || '',
       matriz_competencias: matriz_competencias || [],
@@ -802,12 +899,12 @@ exports.guardarEvaluacion = async (req, res) => {
     };
 
     const pool = await poolPromise;
+    // El concepto de la entrevista no mueve el estado del postulante: Talento Humano lo cambia a mano
     await pool.request()
       .input('ACCION', sql.VarChar(50), 'GUARDAR_EVALUACION_ENTREVISTA')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+      .input('DATA_JSON', sql.NVarChar, JSON.stringify({
         id,
-        evaluacion_entrevista_json: JSON.stringify(evaluationPayload),
-        estado_postulante: decision_final || null
+        evaluacion_entrevista_json: evaluationPayload // objeto: como texto, más de 4000 caracteres se guardaban NULL
       }))
       .execute('spPostulaciones');
 
@@ -817,6 +914,101 @@ exports.guardarEvaluacion = async (req, res) => {
     });
   } catch (err) {
     console.error('Error al guardar evaluación de entrevista:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Middleware de carga del resultado de la prueba psicotécnica (solo PDF); los errores de carga responden 400
+const uploadPrueba = multer({
+  storage: multer.diskStorage({
+    destination: destinoUploads,
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, 'psico-' + uniqueSuffix + '.pdf');
+    }
+  }),
+  defParamCharset: 'utf8',
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (path.extname(file.originalname).toLowerCase() === '.pdf') {
+      return cb(null, true);
+    }
+    cb(new Error('La prueba psicotécnica debe adjuntarse en PDF.'));
+  }
+}).single('prueba_archivo');
+
+exports.uploadPruebaPsicotecnica = (req, res, next) => {
+  uploadPrueba(req, res, (err) => {
+    if (err) {
+      const mensaje = err.code === 'LIMIT_FILE_SIZE' ? 'El archivo supera el tamaño máximo de 10 MB.' : err.message;
+      return res.status(400).json({ error: mensaje });
+    }
+    next();
+  });
+};
+
+// POST adjuntar (o reemplazar) el resultado de la prueba psicotécnica de una postulación
+exports.guardarPruebaPsicotecnica = async (req, res) => {
+  const archivoSubido = req.file ? req.file.path : null;
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Debe adjuntar el archivo PDF de la prueba psicotécnica.' });
+    }
+
+    const pool = await poolPromise;
+    const acceso = await obtenerPruebaPsicotecnica(pool, req.params.id);
+    if (!acceso || !mismaEmpresa(req, acceso.empresa_id)) {
+      fs.unlinkSync(archivoSubido);
+      return res.status(404).json({ error: 'Postulación no encontrada.' });
+    }
+
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'GUARDAR_PRUEBA_PSICOTECNICA')
+      .input('DATA_JSON', sql.NVarChar, JSON.stringify({
+        id: req.params.id,
+        prueba_psicotecnica_nombre: req.file.originalname,
+        prueba_psicotecnica_ruta: req.file.filename
+      }))
+      .execute('spPostulaciones');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    const datos = raw ? JSON.parse(raw) : {};
+    // Borrar el archivo reemplazado para no dejar resultados huérfanos con datos personales
+    if (datos.ruta_anterior) {
+      const anterior = path.join(__dirname, '../uploads', path.basename(datos.ruta_anterior));
+      if (fs.existsSync(anterior)) fs.unlinkSync(anterior);
+    }
+
+    res.json({
+      message: 'Prueba psicotécnica adjuntada exitosamente.',
+      data: { prueba_psicotecnica_nombre: req.file.originalname, tiene_prueba_psicotecnica: 1 }
+    });
+  } catch (err) {
+    if (archivoSubido && fs.existsSync(archivoSubido)) {
+      try { fs.unlinkSync(archivoSubido); } catch (e) {}
+    }
+    console.error('Error al adjuntar la prueba psicotécnica:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// GET descargar el resultado de la prueba psicotécnica de una postulación
+exports.descargarPruebaPsicotecnica = async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const prueba = await obtenerPruebaPsicotecnica(pool, req.params.id);
+    if (!prueba || !prueba.prueba_psicotecnica_ruta || !mismaEmpresa(req, prueba.empresa_id)) {
+      return res.status(404).json({ error: 'La postulación no tiene prueba psicotécnica adjunta.' });
+    }
+
+    const filePath = path.join(__dirname, '../uploads', path.basename(prueba.prueba_psicotecnica_ruta));
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Archivo no encontrado' });
+    }
+    setAttachmentHeader(res, prueba.prueba_psicotecnica_nombre || 'prueba_psicotecnica.pdf');
+    res.sendFile(filePath);
+  } catch (err) {
+    console.error('Error al descargar la prueba psicotécnica:', err);
     res.status(500).json({ error: err.message });
   }
 };

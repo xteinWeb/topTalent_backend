@@ -1,10 +1,12 @@
 const { poolPromise, sql } = require('../config/db');
 const bcrypt = require('bcryptjs');
-const { sendVerificationEmail } = require('../utils/mailer');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/mailer');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { VERSION_TRATAMIENTO_DATOS } = require('../config/legal');
+const { firmarTokenCandidato } = require('../middleware/auth');
+const { generarCodigo, registrarSolicitud, liberarSolicitud, mensajeErrorNegocio } = require('../utils/recuperacion');
 
 // Configure Multer storage for candidate resume uploads (perfil page)
 const storage = multer.diskStorage({
@@ -23,6 +25,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
+  defParamCharset: 'utf8', // nombres de archivo con tildes/ñ (por defecto multer los lee como latin1)
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
     const filetypes = /pdf|docx|doc/;
@@ -136,7 +139,7 @@ exports.login = async (req, res) => {
 
         res.json({
           success: true,
-          token: `candidato-mock-token-${parsedData.id}`,
+          token: firmarTokenCandidato(parsedData),
           user: {
             id: parsedData.id,
             email: parsedData.email,
@@ -182,7 +185,7 @@ exports.verificar = async (req, res) => {
         res.json({
           success: true,
           message: 'Cuenta verificada correctamente',
-          token: `candidato-mock-token-${parsedData.id}`,
+          token: firmarTokenCandidato(parsedData),
           user: {
             id: parsedData.id,
             email: parsedData.email,
@@ -199,14 +202,100 @@ exports.verificar = async (req, res) => {
   }
 };
 
+// Solicitar código de recuperación de contraseña
+exports.solicitarRecuperacion = async (req, res) => {
+  // Respuesta idéntica exista o no la cuenta, para no revelar qué correos están registrados
+  const respuestaGenerica = {
+    success: true,
+    message: 'Si el correo está registrado, te enviamos un código para restablecer tu contraseña.'
+  };
+
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Debe ingresar su correo electrónico.' });
+    }
+
+    if (!registrarSolicitud(`candidato:${email}`)) {
+      return res.status(429).json({ error: 'Ya enviamos un código hace poco. Espera un minuto antes de solicitar otro.' });
+    }
+
+    const codigo = generarCodigo();
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SOLICITAR_RECUPERACION')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ email, codigo_recuperacion: codigo }))
+      .execute('spCandidatos');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    if (raw) {
+      try {
+        await sendPasswordResetEmail(email, codigo);
+      } catch (mailErr) {
+        console.error('Error al enviar el correo de recuperación:', mailErr);
+      }
+    }
+
+    res.json(respuestaGenerica);
+  } catch (err) {
+    console.error('Error al solicitar recuperación de contraseña:', err);
+    res.status(500).json({ error: 'No se pudo procesar la solicitud. Intente nuevamente.' });
+  }
+};
+
+// Restablecer contraseña con el código recibido por correo
+exports.restablecerPassword = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const codigo = String(req.body.codigo || '').trim();
+    const passwordNuevo = req.body.password_nuevo || '';
+
+    if (!email || !codigo || !passwordNuevo) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios: email, codigo y password_nuevo' });
+    }
+    if (passwordNuevo.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' });
+    }
+
+    const passwordHash = await bcrypt.hash(passwordNuevo, 10);
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'RESTABLECER_PASSWORD')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ email, codigo_recuperacion: codigo, password_hash: passwordHash }))
+      .execute('spCandidatos');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    const candidato = raw ? JSON.parse(raw) : null;
+    if (!candidato) {
+      return res.status(400).json({ error: 'El código de recuperación no es válido o ya expiró. Solicita uno nuevo.' });
+    }
+
+    liberarSolicitud(`candidato:${email}`);
+    // Igual que tras verificar el correo: el candidato queda con sesión iniciada
+    res.json({
+      success: true,
+      message: 'Contraseña actualizada correctamente.',
+      token: firmarTokenCandidato(candidato),
+      user: {
+        id: candidato.id,
+        email: candidato.email,
+        role: 'Candidato'
+      }
+    });
+  } catch (err) {
+    const mensaje = mensajeErrorNegocio(err);
+    if (mensaje) {
+      return res.status(400).json({ error: mensaje });
+    }
+    console.error('Error al restablecer contraseña:', err);
+    res.status(500).json({ error: 'No se pudo restablecer la contraseña. Intente nuevamente.' });
+  }
+};
+
 // Obtener Perfil de Candidato
 exports.getPerfil = async (req, res) => {
   try {
-    const id = req.headers.authorization ? req.headers.authorization.replace('Bearer candidato-mock-token-', '') : null;
-
-    if (!id) {
-      return res.status(401).json({ error: 'No autorizado' });
-    }
+    const id = req.user.id;
 
     const pool = await poolPromise;
     pool.request()
@@ -242,12 +331,7 @@ exports.getPerfil = async (req, res) => {
 exports.updatePerfil = async (req, res) => {
   let uploadedFilePath = req.file ? req.file.path : null;
   try {
-    const id = req.headers.authorization ? req.headers.authorization.replace('Bearer candidato-mock-token-', '') : null;
-
-    if (!id) {
-      if (uploadedFilePath && fs.existsSync(uploadedFilePath)) fs.unlinkSync(uploadedFilePath);
-      return res.status(401).json({ error: 'No autorizado' });
-    }
+    const id = req.user.id;
 
     const perfil_completo_json = req.body.perfil_completo_json
       ? (typeof req.body.perfil_completo_json === 'string' ? JSON.parse(req.body.perfil_completo_json) : req.body.perfil_completo_json)

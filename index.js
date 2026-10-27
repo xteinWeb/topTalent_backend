@@ -12,7 +12,9 @@ app.use(cors({
     // Dinámicamente permitimos cualquier origen para evitar bloqueos por cambio de IP/puerto
     callback(null, true);
   },
-  credentials: true
+  credentials: true,
+  // Permite al frontend leer el nombre del archivo en las descargas autenticadas (blob)
+  exposedHeaders: ['Content-Disposition']
 }));
 app.use(express.json());
 
@@ -25,6 +27,10 @@ const candidatosRoutes = require('./routes/candidatos');
 const catalogosRoutes = require('./routes/catalogos');
 const empresasRoutes = require('./routes/empresas');
 const estadosPostulacionRoutes = require('./routes/estadosPostulacion');
+const prefiltroRoutes = require('./routes/prefiltro');
+const competenciasRoutes = require('./routes/competencias');
+const reportesRoutes = require('./routes/reportes');
+const usuariosRoutes = require('./routes/usuarios');
 
 // Register modular routes
 app.use('/api/auth', authRoutes);
@@ -35,6 +41,10 @@ app.use('/api/candidatos', candidatosRoutes);
 app.use('/api/catalogos', catalogosRoutes);
 app.use('/api/empresas', empresasRoutes);
 app.use('/api/estados-postulacion', estadosPostulacionRoutes);
+app.use('/api/prefiltro', prefiltroRoutes);
+app.use('/api/competencias', competenciasRoutes);
+app.use('/api/reportes', reportesRoutes);
+app.use('/api/usuarios', usuariosRoutes);
 
 // Basic health check endpoint
 app.get('/api/health', (req, res) => {

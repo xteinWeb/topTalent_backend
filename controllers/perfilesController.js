@@ -1,6 +1,9 @@
 const { poolPromise, sql } = require('../config/db');
 const { generateDocx } = require('../utils/docxGenerator');
 const { Packer } = require('docx');
+const { empresaDelUsuario, esLiderArea, mismoId } = require('../middleware/auth');
+const { setAttachmentHeader } = require('../utils/http');
+const { ES_GRUPO_VALIDO } = require('../config/competencias');
 
 // Helper function to call n8n Webhook
 async function obtenerPreguntasN8N(id, area, cargo, perfil_json) {
@@ -62,11 +65,16 @@ async function obtenerPreguntasN8N(id, area, cargo, perfil_json) {
 // GET all profiles
 exports.getAll = async (req, res) => {
   try {
-    const empresa_id = req.query.empresa_id || req.headers['x-empresa-id'] || null;
+    const empresa_id = empresaDelUsuario(req);
+    const payload = {};
+    if (empresa_id) payload.empresa_id = empresa_id;
+    // Un líder de área solo ve los perfiles de cargo que tiene a cargo
+    if (esLiderArea(req.user)) payload.lider_id = req.user.id;
+
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'SELECT_ALL')
-      .input('DATA_JSON', sql.VarChar, empresa_id ? JSON.stringify({ empresa_id }) : null)
+      .input('DATA_JSON', sql.VarChar, Object.keys(payload).length > 0 ? JSON.stringify(payload) : null)
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
         let refresh = undefined;
@@ -127,7 +135,7 @@ exports.getById = async (req, res) => {
           parsedData = recordSet.recordset[0]["DATOS"];
         }
 
-        if (!parsedData) {
+        if (!parsedData || (esLiderArea(req.user) && !mismoId(parsedData.lider_id, req.user.id))) {
           return res.status(404).json({ error: 'Perfil no encontrado' });
         }
 
@@ -185,7 +193,7 @@ exports.exportDocx = async (req, res) => {
 
     const fileName = `20260122_ART_ROL_${parsedData.cargo.toUpperCase().replace(/\s+/g, '_')}.docx`;
 
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    setAttachmentHeader(res, fileName);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.send(b64string);
   } catch (err) {
@@ -196,21 +204,26 @@ exports.exportDocx = async (req, res) => {
 // POST create a new profile
 exports.create = async (req, res) => {
   try {
-    const { area, cargo, perfil_json, matriz_competencias_json, empresa_id } = req.body;
+    const { area, cargo, perfil_json, matriz_competencias_json, empresa_id, lider_id, grupo_cargo } = req.body;
 
     if (!area || !cargo || !perfil_json) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
+    }
+    if (grupo_cargo && !ES_GRUPO_VALIDO(grupo_cargo)) {
+      return res.status(400).json({ error: `Grupo de cargo no válido: "${grupo_cargo}".` });
     }
 
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
         empresa_id: empresa_id || '00',
-        area, 
-        cargo, 
+        area,
+        cargo,
         perfil_json,
-        matriz_competencias_json 
+        matriz_competencias_json,
+        lider_id: lider_id || null,
+        grupo_cargo: grupo_cargo || null
       }))
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
@@ -249,17 +262,23 @@ exports.update = async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
     }
 
+    const datos = { id, empresa_id, area, cargo, perfil_json, matriz_competencias_json };
+    // Solo se cambia el líder si la petición lo trae (null lo desasigna); si no viene, el SP lo conserva
+    if (Object.prototype.hasOwnProperty.call(req.body, 'lider_id')) {
+      datos.lider_id = req.body.lider_id || null;
+    }
+    // Igual con el grupo de cargo de la matriz de competencias
+    if (Object.prototype.hasOwnProperty.call(req.body, 'grupo_cargo')) {
+      if (req.body.grupo_cargo && !ES_GRUPO_VALIDO(req.body.grupo_cargo)) {
+        return res.status(400).json({ error: `Grupo de cargo no válido: "${req.body.grupo_cargo}".` });
+      }
+      datos.grupo_cargo = req.body.grupo_cargo || null;
+    }
+
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'UPDATE')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({ 
-        id, 
-        empresa_id,
-        area, 
-        cargo, 
-        perfil_json,
-        matriz_competencias_json 
-      }))
+      .input('DATA_JSON', sql.VarChar, JSON.stringify(datos))
       .execute('spPerfilesCargo')
       .then(function (recordSet) {
         let refresh = undefined;

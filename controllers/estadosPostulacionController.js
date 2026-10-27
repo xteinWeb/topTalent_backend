@@ -67,13 +67,16 @@ exports.update = async (req, res) => {
   }
 };
 
-// Helper reutilizable: valida que el estado exista y esté activo en BD
-exports.esEstadoValido = async (nombre) => {
-  if (!nombre) return false;
+// Helper reutilizable: si el estado existe y está activo en BD, y si exige registrar motivo
+exports.infoEstado = async (nombre) => {
+  if (!nombre) return { existe: false, requiereMotivo: false };
   const pool = await poolPromise;
   const result = await pool.request()
     .input('ACCION', sql.VarChar(50), 'EXISTE_ACTIVO')
     .input('DATA_JSON', sql.NVarChar, JSON.stringify({ nombre }))
     .execute('spEstadosPostulacion');
-  return !!(result.recordset[0] && result.recordset[0].EXISTE);
+  const fila = result.recordset[0] || {};
+  return { existe: !!fila.EXISTE, requiereMotivo: !!fila.REQUIERE_MOTIVO };
 };
+
+exports.esEstadoValido = async (nombre) => (await exports.infoEstado(nombre)).existe;
