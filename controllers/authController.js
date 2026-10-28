@@ -1,5 +1,26 @@
 const { poolPromise, sql } = require('../config/db');
 const bcrypt = require('bcryptjs');
+const { firmarTokenAdmin, esSuperAdmin, empresaDelUsuario, ROLES } = require('../middleware/auth');
+const { sendPasswordResetEmail } = require('../utils/mailer');
+const { generarCodigo, registrarSolicitud, liberarSolicitud, mensajeErrorNegocio } = require('../utils/recuperacion');
+
+// Respuesta de sesión iniciada (login y restablecimiento de contraseña)
+function respuestaSesion(usuario) {
+  return {
+    success: true,
+    token: firmarTokenAdmin(usuario),
+    user: {
+      id: usuario.id,
+      username: usuario.username,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      empresa_id: usuario.empresa_id,
+      empresa_nombre: usuario.empresa_nombre,
+      role: usuario.rol || 'Administrator',
+      area: usuario.area || ''
+    }
+  };
+}
 
 // POST admin login handler
 exports.login = async (req, res) => {
@@ -38,20 +59,7 @@ exports.login = async (req, res) => {
           return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
         }
 
-        res.json({
-          success: true,
-          token: `artdecon-admin-token-${parsedData.id}`,
-          user: {
-            id: parsedData.id,
-            username: parsedData.username,
-            nombre: parsedData.nombre,
-            email: parsedData.email,
-            empresa_id: parsedData.empresa_id,
-            empresa_nombre: parsedData.empresa_nombre,
-            role: parsedData.rol || 'Administrator',
-            area: parsedData.area || ''
-          }
-        });
+        res.json(respuestaSesion(parsedData));
       })
       .catch((err) => {
         console.error('Error in admin login:', err);
@@ -62,10 +70,121 @@ exports.login = async (req, res) => {
   }
 };
 
+// POST solicitar código de recuperación de contraseña (por usuario o correo)
+exports.solicitarRecuperacion = async (req, res) => {
+  // Respuesta idéntica exista o no la cuenta, para no revelar qué usuarios están registrados
+  const respuestaGenerica = {
+    success: true,
+    message: 'Si el usuario existe y tiene un correo registrado, enviamos a ese correo un código para restablecer la contraseña.'
+  };
+
+  try {
+    const identificador = String(req.body.usuario || '').trim();
+    if (!identificador) {
+      return res.status(400).json({ error: 'Debe ingresar su usuario o correo electrónico.' });
+    }
+
+    if (!registrarSolicitud(`admin:${identificador.toLowerCase()}`)) {
+      return res.status(429).json({ error: 'Ya enviamos un código hace poco. Espere un minuto antes de solicitar otro.' });
+    }
+
+    const codigo = generarCodigo();
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SOLICITAR_RECUPERACION')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ username: identificador, codigo_recuperacion: codigo }))
+      .execute('spUsuariosAdmin');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    const usuario = raw ? JSON.parse(raw) : null;
+    if (usuario && usuario.email) {
+      try {
+        await sendPasswordResetEmail(usuario.email, codigo);
+      } catch (mailErr) {
+        console.error('Error al enviar el correo de recuperación (admin):', mailErr);
+      }
+    }
+
+    res.json(respuestaGenerica);
+  } catch (err) {
+    console.error('Error al solicitar recuperación de contraseña (admin):', err);
+    res.status(500).json({ error: 'No se pudo procesar la solicitud. Intente nuevamente.' });
+  }
+};
+
+// POST restablecer contraseña con el código recibido por correo
+exports.restablecerPassword = async (req, res) => {
+  try {
+    const identificador = String(req.body.usuario || '').trim();
+    const codigo = String(req.body.codigo || '').trim();
+    const passwordNuevo = req.body.password_nuevo || '';
+
+    if (!identificador || !codigo || !passwordNuevo) {
+      return res.status(400).json({ error: 'Faltan campos obligatorios: usuario, codigo y password_nuevo' });
+    }
+    if (passwordNuevo.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres.' });
+    }
+
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'RESTABLECER_PASSWORD')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({
+        username: identificador,
+        codigo_recuperacion: codigo,
+        password_hash: await bcrypt.hash(passwordNuevo, 10)
+      }))
+      .execute('spUsuariosAdmin');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    const usuario = raw ? JSON.parse(raw) : null;
+    if (!usuario) {
+      return res.status(400).json({ error: 'El código de recuperación no es válido o ya expiró. Solicite uno nuevo.' });
+    }
+
+    liberarSolicitud(`admin:${identificador.toLowerCase()}`);
+    res.json({ ...respuestaSesion(usuario), message: 'Contraseña actualizada correctamente.' });
+  } catch (err) {
+    const mensaje = mensajeErrorNegocio(err);
+    if (mensaje) {
+      return res.status(400).json({ error: mensaje });
+    }
+    console.error('Error al restablecer contraseña (admin):', err);
+    res.status(500).json({ error: 'No se pudo restablecer la contraseña. Intente nuevamente.' });
+  }
+};
+
+// GET líderes de área activos de la empresa (para asignarlos como responsables de perfiles de cargo)
+exports.listarLideres = async (req, res) => {
+  try {
+    const empresa_id = empresaDelUsuario(req);
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'SELECT_ALL')
+      .input('DATA_JSON', sql.VarChar, empresa_id ? JSON.stringify({ empresa_id }) : null)
+      .execute('spUsuariosAdmin');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    const usuarios = raw ? JSON.parse(raw) : [];
+    const lideres = usuarios
+      .filter(u => (u.activo === true || u.activo === 1) && ROLES.LIDER_AREA.includes(String(u.rol || '').toUpperCase()))
+      .map(u => ({ id: u.id, nombre: u.nombre, area: u.area || '', email: u.email || '' }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+    res.json({ data: lideres });
+  } catch (err) {
+    console.error('Error al listar líderes de área:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // GET admin profile & company info
 exports.getProfile = async (req, res) => {
   try {
     const { id } = req.params;
+    if (String(id).toLowerCase() !== String(req.user.id).toLowerCase() && !esSuperAdmin(req.user)) {
+      return res.status(403).json({ error: 'No tiene permisos para consultar este usuario.' });
+    }
     const pool = await poolPromise;
     pool.request()
       .input('ACCION', sql.VarChar(50), 'SELECT_BY_ID')
@@ -102,11 +221,9 @@ exports.getProfile = async (req, res) => {
 // PUT update admin credentials and profile
 exports.updateCredentials = async (req, res) => {
   try {
-    const { id, nombre, email, password_actual, password_nuevo } = req.body;
-
-    if (!id) {
-      return res.status(400).json({ error: 'Identificador de usuario es obligatorio.' });
-    }
+    const { nombre, email, password_actual, password_nuevo } = req.body;
+    // El usuario a modificar es siempre el de la sesión, nunca uno enviado en el body
+    const id = req.user.id;
 
     const pool = await poolPromise;
     // 1. Fetch current user to verify identity and old password

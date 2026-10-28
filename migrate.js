@@ -1,6 +1,11 @@
 const { sql, poolPromise } = require('./config/db');
 const bcrypt = require('bcryptjs');
 const { migrateEstadosPostulacion } = require('./migrations/estadosPostulacion');
+const { migrateRecuperacionPassword } = require('./migrations/recuperacionPassword');
+const { migrateMejorasSeleccion } = require('./migrations/mejorasSeleccion');
+const { migratePrefiltro } = require('./migrations/prefiltro');
+const { migrateMatrizCompetencias } = require('./migrations/matrizCompetencias');
+const { migrateReportes } = require('./migrations/reportes');
 
 async function migrate() {
     try {
@@ -321,6 +326,7 @@ async function migrate() {
             `;
             await pool.request().query(alterCandidatosColsQuery);
         }
+        await migrateRecuperacionPassword(pool);
 
         // 3. Create postulaciones table if not exists
         const checkPostulacionesQuery = `
@@ -470,6 +476,10 @@ async function migrate() {
             `;
             await pool.request().query(alterPostulacionesQuery);
         }
+        await migrateMejorasSeleccion(pool);
+        await migratePrefiltro(pool);
+        await migrateMatrizCompetencias(pool);
+        await migrateReportes(pool);
 
         // 3.5 Create catalogos table if not exists
         const checkCatalogosQuery = `
@@ -497,6 +507,17 @@ async function migrate() {
         // Seed catalogos with initial values (only if empty for each tipo)
         console.log('Seeding catalogos...');
         const seedCatalogos = [
+            // "Otro" (con texto libre) no va en el catálogo: lo agrega la aplicación siempre al final
+            { tipo: 'MOTIVO_NO_APROBADO', valores: [
+                'No cumple la experiencia requerida',
+                'No cumple la formación requerida',
+                'Aspiración salarial fuera de rango',
+                'Sin disponibilidad de horario o ubicación',
+                'No asistió a la entrevista',
+                'Resultado de la prueba psicotécnica',
+                'Referencias no favorables',
+                'Desistió del proceso'
+            ]},
             { tipo: 'NIVEL_EDUCATIVO', valores: [
                 'Bachillerato / Educación Media',
                 'Técnico Profesional',
@@ -688,6 +709,7 @@ async function migrate() {
           DECLARE @rol NVARCHAR(50) = NULL;
           DECLARE @area NVARCHAR(150) = NULL;
           DECLARE @activo BIT = NULL;
+          DECLARE @codigo_recuperacion NVARCHAR(10) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -700,6 +722,7 @@ async function migrate() {
               SET @rol = JSON_VALUE(@DATA_JSON, '$.rol');
               SET @area = JSON_VALUE(@DATA_JSON, '$.area');
               SET @activo = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.activo') AS BIT);
+              SET @codigo_recuperacion = JSON_VALUE(@DATA_JSON, '$.codigo_recuperacion');
           END
 
           IF @ACCION = 'SELECT_BY_USERNAME'
@@ -817,6 +840,84 @@ async function migrate() {
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
           END
+          ELSE IF @ACCION = 'SOLICITAR_RECUPERACION' OR @ACCION = 'RESTABLECER_PASSWORD'
+          BEGIN
+              -- Se identifica por usuario o correo (igual que el login); el usuario exacto tiene prioridad
+              -- porque el correo no es único. Solo usuarios activos y con correo pueden recuperar.
+              DECLARE @rec_id UNIQUEIDENTIFIER = NULL;
+              SELECT TOP 1 @rec_id = u.id
+              FROM usuarios_admin u
+              WHERE (u.username = @username OR u.email = @username)
+                AND u.activo = 1
+                AND u.email IS NOT NULL AND u.email <> ''
+              ORDER BY CASE WHEN u.username = @username THEN 0 ELSE 1 END;
+
+              IF @ACCION = 'SOLICITAR_RECUPERACION'
+              BEGIN
+                  -- Un código nuevo reemplaza al anterior y reinicia los intentos; vence a los 15 minutos
+                  UPDATE usuarios_admin
+                  SET codigo_recuperacion = @codigo_recuperacion,
+                      codigo_recuperacion_expira = DATEADD(MINUTE, 15, GETDATE()),
+                      intentos_recuperacion = 0
+                  WHERE id = @rec_id;
+
+                  SELECT (
+                      SELECT id, email
+                      FROM usuarios_admin
+                      WHERE id = @rec_id
+                      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                  ) AS DATOS;
+              END
+              ELSE
+              BEGIN
+                  DECLARE @codigo_rec_actual NVARCHAR(10) = NULL;
+                  DECLARE @codigo_rec_expira DATETIME2 = NULL;
+                  DECLARE @intentos_rec INT = 0;
+
+                  SELECT @codigo_rec_actual = codigo_recuperacion,
+                         @codigo_rec_expira = codigo_recuperacion_expira,
+                         @intentos_rec = intentos_recuperacion
+                  FROM usuarios_admin
+                  WHERE id = @rec_id;
+
+                  IF @rec_id IS NULL OR @codigo_rec_actual IS NULL OR @codigo_rec_expira < GETDATE() OR @intentos_rec >= 5
+                  BEGIN
+                      THROW 50000, 'El código de recuperación no es válido o ya expiró. Solicite uno nuevo.', 1;
+                  END
+
+                  IF @codigo_rec_actual <> ISNULL(@codigo_recuperacion, '')
+                  BEGIN
+                      UPDATE usuarios_admin SET intentos_recuperacion = intentos_recuperacion + 1 WHERE id = @rec_id;
+                      THROW 50000, 'El código de recuperación es incorrecto.', 1;
+                  END
+
+                  UPDATE usuarios_admin
+                  SET password_hash = @password_hash,
+                      codigo_recuperacion = NULL,
+                      codigo_recuperacion_expira = NULL,
+                      intentos_recuperacion = 0,
+                      fecha_actualizacion = GETDATE()
+                  WHERE id = @rec_id;
+
+                  -- Mismos campos que SELECT_BY_USERNAME, para iniciar sesión directamente
+                  SELECT (
+                      SELECT
+                          u.id,
+                          u.empresa_id,
+                          e.nombre AS empresa_nombre,
+                          u.nombre,
+                          u.username,
+                          u.email,
+                          u.rol,
+                          u.area,
+                          u.activo
+                      FROM usuarios_admin u
+                      INNER JOIN empresas e ON u.empresa_id = e.id
+                      WHERE u.id = @rec_id
+                      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+                  ) AS DATOS;
+              END
+          END
       END;
     `);
         console.log('Procedure "spUsuariosAdmin" created/updated.');
@@ -837,11 +938,21 @@ async function migrate() {
           DECLARE @cargo NVARCHAR(150) = NULL;
           DECLARE @perfil_json NVARCHAR(MAX) = NULL;
           DECLARE @matriz_competencias_json NVARCHAR(MAX) = NULL;
+          DECLARE @lider_id UNIQUEIDENTIFIER = NULL;
+          -- UPDATE solo toca lider_id si el JSON trae la clave (para no borrarlo en llamadas que no la envían)
+          DECLARE @trae_lider_id BIT = 0;
+          -- Grupo de cargo de la matriz de competencias (DIRECTIVO, COORDINADOR, ANALISTA, FACILITADOR, OPERARIO)
+          DECLARE @grupo_cargo NVARCHAR(20) = NULL;
+          DECLARE @trae_grupo_cargo BIT = 0;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
               SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
+              SET @lider_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.lider_id') AS UNIQUEIDENTIFIER);
+              IF EXISTS (SELECT 1 FROM OPENJSON(@DATA_JSON) WHERE [key] = 'lider_id') SET @trae_lider_id = 1;
+              SET @grupo_cargo = JSON_VALUE(@DATA_JSON, '$.grupo_cargo');
+              IF EXISTS (SELECT 1 FROM OPENJSON(@DATA_JSON) WHERE [key] = 'grupo_cargo') SET @trae_grupo_cargo = 1;
               SET @area = JSON_VALUE(@DATA_JSON, '$.area');
               SET @cargo = JSON_VALUE(@DATA_JSON, '$.cargo');
               SET @perfil_json = JSON_QUERY(@DATA_JSON, '$.perfil_json');
@@ -862,11 +973,16 @@ async function migrate() {
                       p.cargo, 
                       CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_json, 
                       CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
-                      p.fecha_creacion AS fecha_creacion, 
-                      p.fecha_actualizacion AS fecha_actualizacion 
+                      p.lider_id,
+                      l.nombre AS lider_nombre,
+                      p.grupo_cargo,
+                      p.fecha_creacion AS fecha_creacion,
+                      p.fecha_actualizacion AS fecha_actualizacion
                   FROM perfiles_cargo p
                   LEFT JOIN empresas e ON p.empresa_id = e.id
+                  LEFT JOIN usuarios_admin l ON p.lider_id = l.id
                   WHERE (@empresa_id IS NULL OR p.empresa_id = @empresa_id)
+                    AND (@lider_id IS NULL OR p.lider_id = @lider_id)
                   ORDER BY p.fecha_actualizacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -882,10 +998,14 @@ async function migrate() {
                       p.cargo, 
                       CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_json, 
                       CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
-                      p.fecha_creacion AS fecha_creacion, 
-                      p.fecha_actualizacion AS fecha_actualizacion 
+                      p.lider_id,
+                      l.nombre AS lider_nombre,
+                      p.grupo_cargo,
+                      p.fecha_creacion AS fecha_creacion,
+                      p.fecha_actualizacion AS fecha_actualizacion
                   FROM perfiles_cargo p
                   LEFT JOIN empresas e ON p.empresa_id = e.id
+                  LEFT JOIN usuarios_admin l ON p.lider_id = l.id
                   WHERE p.id = @id
                   FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
               ) AS DATOS;
@@ -894,8 +1014,8 @@ async function migrate() {
           BEGIN
               DECLARE @InsertedID UNIQUEIDENTIFIER = NEWID();
 
-              INSERT INTO perfiles_cargo (id, empresa_id, area, cargo, perfil_json, matriz_competencias_json) 
-              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @area, @cargo, @perfil_json, @matriz_competencias_json);
+              INSERT INTO perfiles_cargo (id, empresa_id, area, cargo, perfil_json, matriz_competencias_json, lider_id, grupo_cargo)
+              VALUES (@InsertedID, ISNULL(@empresa_id, '00'), @area, @cargo, @perfil_json, @matriz_competencias_json, @lider_id, @grupo_cargo);
 
               SELECT (
                   SELECT id, empresa_id, area, cargo 
@@ -912,7 +1032,9 @@ async function migrate() {
                   cargo = @cargo, 
                   perfil_json = @perfil_json, 
                   matriz_competencias_json = ISNULL(@matriz_competencias_json, matriz_competencias_json),
-                  fecha_actualizacion = GETDATE() 
+                  lider_id = CASE WHEN @trae_lider_id = 1 THEN @lider_id ELSE lider_id END,
+                  grupo_cargo = CASE WHEN @trae_grupo_cargo = 1 THEN @grupo_cargo ELSE grupo_cargo END,
+                  fecha_actualizacion = GETDATE()
               WHERE id = @id;
 
               SELECT '{"message": "Perfil actualizado exitosamente"}' AS DATOS;
@@ -958,11 +1080,14 @@ async function migrate() {
           DECLARE @salario_min DECIMAL(18,2) = NULL;
           DECLARE @salario_max DECIMAL(18,2) = NULL;
           DECLARE @perfil_oculto_json NVARCHAR(MAX) = NULL;
+          -- Filtro del líder de área: vacantes que solicitó o de los perfiles que tiene a cargo
+          DECLARE @lider_id UNIQUEIDENTIFIER = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
               SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
+              SET @lider_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.lider_id') AS UNIQUEIDENTIFIER);
               SET @perfil_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.perfil_id') AS UNIQUEIDENTIFIER);
               SET @titulo = JSON_VALUE(@DATA_JSON, '$.titulo');
               SET @descripcion = JSON_VALUE(@DATA_JSON, '$.descripcion');
@@ -994,6 +1119,7 @@ async function migrate() {
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
                       p.area AS perfil_area,
+                      p.lider_id AS perfil_lider_id,
                       CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
                       CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       v.titulo, 
@@ -1022,8 +1148,9 @@ async function migrate() {
                   LEFT JOIN empresas e ON v.empresa_id = e.id
                   LEFT JOIN usuarios_admin u_sol ON v.solicitado_por_id = u_sol.id
                   LEFT JOIN usuarios_admin u_aut ON v.autorizado_por_id = u_aut.id
-                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id) 
+                  WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
                     AND (@solicitado_por_id IS NULL OR v.solicitado_por_id = @solicitado_por_id)
+                    AND (@lider_id IS NULL OR v.solicitado_por_id = @lider_id OR p.lider_id = @lider_id)
                     AND v.estado != 'ELIMINADA'
                   ORDER BY v.fecha_actualizacion DESC
                   FOR JSON PATH
@@ -1108,6 +1235,7 @@ async function migrate() {
                       v.perfil_id,
                       p.cargo AS perfil_cargo,
                       p.area AS perfil_area,
+                      p.lider_id AS perfil_lider_id,
                       CASE WHEN ISJSON(p.perfil_json) = 1 THEN JSON_QUERY(p.perfil_json) ELSE NULL END AS perfil_completo_json,
                       CASE WHEN ISJSON(p.matriz_competencias_json) = 1 THEN JSON_QUERY(p.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
                       v.titulo, 
@@ -1177,8 +1305,10 @@ async function migrate() {
           END
           ELSE IF @ACCION = 'ACTIVAR'
           BEGIN
+              -- Se conserva la primera fecha de publicación (reactivar no la cambia)
               UPDATE vacantes 
-              SET estado = 'ACTIVA', fecha_actualizacion = GETDATE() 
+              SET estado = 'ACTIVA', fecha_actualizacion = GETDATE(),
+                  fecha_activacion = ISNULL(fecha_activacion, GETDATE())
               WHERE id = @id;
 
               SELECT '{"message": "Vacante activada exitosamente"}' AS DATOS;
@@ -1267,11 +1397,30 @@ async function migrate() {
           DECLARE @estado_postulante NVARCHAR(50) = NULL;
           DECLARE @cita_entrevista_json NVARCHAR(MAX) = NULL;
           DECLARE @evaluacion_entrevista_json NVARCHAR(MAX) = NULL;
+          DECLARE @lider_id UNIQUEIDENTIFIER = NULL;
+          DECLARE @motivo_no_aprobado NVARCHAR(150) = NULL;
+          DECLARE @motivo_no_aprobado_detalle NVARCHAR(MAX) = NULL;
+          DECLARE @prueba_psicotecnica_nombre NVARCHAR(250) = NULL;
+          DECLARE @prueba_psicotecnica_ruta NVARCHAR(500) = NULL;
+          DECLARE @prefiltro_json NVARCHAR(MAX) = NULL;
+          DECLARE @prefiltro_token_hash CHAR(64) = NULL;
+          DECLARE @invalidar_token BIT = 0;
+          DECLARE @usuario_id UNIQUEIDENTIFIER = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
+              SET @prefiltro_json = JSON_QUERY(@DATA_JSON, '$.prefiltro_json');
+              IF @prefiltro_json IS NULL SET @prefiltro_json = JSON_VALUE(@DATA_JSON, '$.prefiltro_json');
+              SET @prefiltro_token_hash = JSON_VALUE(@DATA_JSON, '$.prefiltro_token_hash');
+              SET @invalidar_token = ISNULL(TRY_CAST(JSON_VALUE(@DATA_JSON, '$.invalidar_token') AS BIT), 0);
+              SET @usuario_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.usuario_id') AS UNIQUEIDENTIFIER);
               SET @id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.id') AS UNIQUEIDENTIFIER);
               SET @empresa_id = JSON_VALUE(@DATA_JSON, '$.empresa_id');
+              SET @lider_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.lider_id') AS UNIQUEIDENTIFIER);
+              SET @motivo_no_aprobado = JSON_VALUE(@DATA_JSON, '$.motivo_no_aprobado');
+              SET @motivo_no_aprobado_detalle = JSON_VALUE(@DATA_JSON, '$.motivo_no_aprobado_detalle');
+              SET @prueba_psicotecnica_nombre = JSON_VALUE(@DATA_JSON, '$.prueba_psicotecnica_nombre');
+              SET @prueba_psicotecnica_ruta = JSON_VALUE(@DATA_JSON, '$.prueba_psicotecnica_ruta');
               SET @vacante_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.vacante_id') AS UNIQUEIDENTIFIER);
               SET @candidato_id = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.candidato_id') AS UNIQUEIDENTIFIER);
               SET @preguntas_respondidas_json = JSON_QUERY(@DATA_JSON, '$.preguntas_respondidas_json');
@@ -1316,13 +1465,23 @@ async function migrate() {
                       ISNULL(p.estado_postulante, 'Postulado') AS estado_postulante,
                       CASE WHEN ISJSON(p.cita_entrevista_json) = 1 THEN JSON_QUERY(p.cita_entrevista_json) ELSE NULL END AS cita_entrevista_json,
                       CASE WHEN ISJSON(p.evaluacion_entrevista_json) = 1 THEN JSON_QUERY(p.evaluacion_entrevista_json) ELSE NULL END AS evaluacion_entrevista_json,
-                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json
+                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
+                      p.motivo_no_aprobado,
+                      p.motivo_no_aprobado_detalle,
+                      p.prueba_psicotecnica_nombre,
+                      p.prueba_psicotecnica_fecha,
+                      CASE WHEN p.prueba_psicotecnica_ruta IS NULL THEN 0 ELSE 1 END AS tiene_prueba_psicotecnica,
+                      pc.lider_id AS perfil_lider_id,
+                      pc.grupo_cargo AS perfil_grupo_cargo,
+                      CASE WHEN ISJSON(p.prefiltro_json) = 1 THEN JSON_QUERY(p.prefiltro_json) ELSE NULL END AS prefiltro_json,
+                      CASE WHEN p.prefiltro_token_hash IS NOT NULL AND p.prefiltro_token_expira > GETDATE() THEN p.prefiltro_token_expira ELSE NULL END AS prefiltro_enlace_expira
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   INNER JOIN perfiles_cargo pc ON v.perfil_id = pc.id
                   LEFT JOIN empresas e ON v.empresa_id = e.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE (@empresa_id IS NULL OR v.empresa_id = @empresa_id)
+                    AND (@lider_id IS NULL OR v.solicitado_por_id = @lider_id OR pc.lider_id = @lider_id)
                   ORDER BY p.fecha_postulacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -1356,12 +1515,22 @@ async function migrate() {
                       ISNULL(p.estado_postulante, 'Postulado') AS estado_postulante,
                       CASE WHEN ISJSON(p.cita_entrevista_json) = 1 THEN JSON_QUERY(p.cita_entrevista_json) ELSE NULL END AS cita_entrevista_json,
                       CASE WHEN ISJSON(p.evaluacion_entrevista_json) = 1 THEN JSON_QUERY(p.evaluacion_entrevista_json) ELSE NULL END AS evaluacion_entrevista_json,
-                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json
+                      CASE WHEN ISJSON(pc.matriz_competencias_json) = 1 THEN JSON_QUERY(pc.matriz_competencias_json) ELSE NULL END AS matriz_competencias_json,
+                      p.motivo_no_aprobado,
+                      p.motivo_no_aprobado_detalle,
+                      p.prueba_psicotecnica_nombre,
+                      p.prueba_psicotecnica_fecha,
+                      CASE WHEN p.prueba_psicotecnica_ruta IS NULL THEN 0 ELSE 1 END AS tiene_prueba_psicotecnica,
+                      pc.lider_id AS perfil_lider_id,
+                      pc.grupo_cargo AS perfil_grupo_cargo,
+                      CASE WHEN ISJSON(p.prefiltro_json) = 1 THEN JSON_QUERY(p.prefiltro_json) ELSE NULL END AS prefiltro_json,
+                      CASE WHEN p.prefiltro_token_hash IS NOT NULL AND p.prefiltro_token_expira > GETDATE() THEN p.prefiltro_token_expira ELSE NULL END AS prefiltro_enlace_expira
                   FROM postulaciones p
                   INNER JOIN vacantes v ON p.vacante_id = v.id
                   INNER JOIN perfiles_cargo pc ON v.perfil_id = pc.id
                   INNER JOIN candidatos c ON p.candidato_id = c.id
                   WHERE p.vacante_id = @vacante_id
+                    AND (@lider_id IS NULL OR v.solicitado_por_id = @lider_id OR pc.lider_id = @lider_id)
                   ORDER BY p.fecha_postulacion DESC
                   FOR JSON PATH
               ) AS DATOS;
@@ -1392,29 +1561,135 @@ async function migrate() {
           END
           ELSE IF @ACCION = 'CAMBIAR_ESTADO_POSTULANTE'
           BEGIN
-              UPDATE postulaciones 
-              SET estado_postulante = @estado_postulante
+              -- El motivo solo aplica en los estados que lo exigen; al pasar a otro estado se limpia
+              DECLARE @estado_anterior NVARCHAR(50) = (SELECT estado_postulante FROM postulaciones WHERE id = @id);
+
+              UPDATE postulaciones
+              SET estado_postulante = @estado_postulante,
+                  motivo_no_aprobado = @motivo_no_aprobado,
+                  motivo_no_aprobado_detalle = @motivo_no_aprobado_detalle
               WHERE id = @id;
+
+              -- Historial para los tiempos del reporte de indicadores
+              IF @@ROWCOUNT > 0 AND ISNULL(@estado_anterior, '') <> ISNULL(@estado_postulante, '')
+                  INSERT INTO postulaciones_historial_estado (postulacion_id, estado_anterior, estado_nuevo, usuario_id)
+                  VALUES (@id, @estado_anterior, @estado_postulante, @usuario_id);
 
               SELECT '{"message": "Estado del postulante actualizado exitosamente"}' AS DATOS;
           END
           ELSE IF @ACCION = 'AGENDAR_ENTREVISTA'
           BEGIN
               UPDATE postulaciones 
-              SET cita_entrevista_json = @cita_entrevista_json,
-                  estado_postulante = 'Citado a Entrevista'
+              SET cita_entrevista_json = @cita_entrevista_json  -- el estado lo cambia Talento Humano a mano
               WHERE id = @id;
 
               SELECT '{"message": "Entrevista agendada exitosamente"}' AS DATOS;
           END
           ELSE IF @ACCION = 'GUARDAR_EVALUACION_ENTREVISTA'
           BEGIN
-              UPDATE postulaciones 
+              UPDATE postulaciones
               SET evaluacion_entrevista_json = @evaluacion_entrevista_json,
-                  estado_postulante = ISNULL(@estado_postulante, estado_postulante)
+                  estado_postulante = ISNULL(@estado_postulante, estado_postulante),
+                  motivo_no_aprobado = CASE WHEN @estado_postulante IS NULL THEN motivo_no_aprobado ELSE @motivo_no_aprobado END,
+                  motivo_no_aprobado_detalle = CASE WHEN @estado_postulante IS NULL THEN motivo_no_aprobado_detalle ELSE @motivo_no_aprobado_detalle END
               WHERE id = @id;
 
               SELECT '{"message": "Evaluación de entrevista guardada exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'GUARDAR_PRUEBA_PSICOTECNICA'
+          BEGIN
+              -- Devuelve la ruta anterior para que la aplicación borre el archivo reemplazado
+              DECLARE @ruta_anterior NVARCHAR(500) = (SELECT prueba_psicotecnica_ruta FROM postulaciones WHERE id = @id);
+
+              UPDATE postulaciones
+              SET prueba_psicotecnica_nombre = @prueba_psicotecnica_nombre,
+                  prueba_psicotecnica_ruta = @prueba_psicotecnica_ruta,
+                  prueba_psicotecnica_fecha = GETDATE()
+              WHERE id = @id;
+
+              SELECT (
+                  SELECT @@ROWCOUNT AS actualizadas, @ruta_anterior AS ruta_anterior
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_PREFILTRO'
+          BEGIN
+              SELECT (
+                  SELECT p.id, v.empresa_id, v.titulo AS vacante_titulo,
+                         COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), '') AS nombre_completo,
+                         COALESCE(JSON_VALUE(c.perfil_completo_json, '$.telefono'), '') AS telefono,
+                         CASE WHEN ISJSON(p.prefiltro_json) = 1 THEN JSON_QUERY(p.prefiltro_json) ELSE NULL END AS prefiltro_json,
+                         CASE WHEN p.prefiltro_token_hash IS NOT NULL AND p.prefiltro_token_expira > GETDATE() THEN p.prefiltro_token_expira ELSE NULL END AS prefiltro_enlace_expira
+                  FROM postulaciones p
+                  INNER JOIN vacantes v ON p.vacante_id = v.id
+                  INNER JOIN candidatos c ON p.candidato_id = c.id
+                  WHERE p.id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'GUARDAR_PREFILTRO'
+          BEGIN
+              -- Si Talento Humano ya registró las respuestas por teléfono, el enlace pendiente deja de servir
+              UPDATE postulaciones
+              SET prefiltro_json = @prefiltro_json,
+                  prefiltro_token_hash = CASE WHEN @invalidar_token = 1 THEN NULL ELSE prefiltro_token_hash END,
+                  prefiltro_token_expira = CASE WHEN @invalidar_token = 1 THEN NULL ELSE prefiltro_token_expira END
+              WHERE id = @id;
+
+              SELECT (SELECT @@ROWCOUNT AS actualizadas FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) AS DATOS;
+          END
+          ELSE IF @ACCION = 'GENERAR_TOKEN_PREFILTRO'
+          BEGIN
+              -- Un enlace nuevo reemplaza al anterior; vence a las 72 horas
+              UPDATE postulaciones
+              SET prefiltro_token_hash = @prefiltro_token_hash,
+                  prefiltro_token_expira = DATEADD(HOUR, 72, GETDATE())
+              WHERE id = @id;
+
+              SELECT (
+                  SELECT prefiltro_token_expira AS expira
+                  FROM postulaciones
+                  WHERE id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_BY_TOKEN_PREFILTRO'
+          BEGIN
+              SELECT (
+                  SELECT p.id, v.titulo AS vacante_titulo, e.nombre AS empresa_nombre,
+                         COALESCE(JSON_VALUE(c.perfil_completo_json, '$.nombre_completo'), '') AS nombre_completo,
+                         CASE WHEN ISJSON(p.prefiltro_json) = 1 THEN JSON_QUERY(p.prefiltro_json) ELSE NULL END AS prefiltro_json,
+                         p.prefiltro_token_expira AS expira
+                  FROM postulaciones p
+                  INNER JOIN vacantes v ON p.vacante_id = v.id
+                  LEFT JOIN empresas e ON v.empresa_id = e.id
+                  INNER JOIN candidatos c ON p.candidato_id = c.id
+                  WHERE p.prefiltro_token_hash = @prefiltro_token_hash
+                    AND p.prefiltro_token_expira > GETDATE()
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'RESPONDER_PREFILTRO'
+          BEGIN
+              -- Un solo uso: la condición sobre el hash vigente evita que dos envíos simultáneos guarden ambos
+              UPDATE postulaciones
+              SET prefiltro_json = @prefiltro_json,
+                  prefiltro_token_hash = NULL,
+                  prefiltro_token_expira = NULL
+              WHERE prefiltro_token_hash = @prefiltro_token_hash
+                AND prefiltro_token_expira > GETDATE();
+
+              SELECT (SELECT @@ROWCOUNT AS actualizadas FOR JSON PATH, WITHOUT_ARRAY_WRAPPER) AS DATOS;
+          END
+          ELSE IF @ACCION = 'SELECT_PRUEBA_PSICOTECNICA'
+          BEGIN
+              SELECT (
+                  SELECT p.id, p.prueba_psicotecnica_nombre, p.prueba_psicotecnica_ruta, v.empresa_id
+                  FROM postulaciones p
+                  INNER JOIN vacantes v ON p.vacante_id = v.id
+                  WHERE p.id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
           END
       END;
     `);
@@ -1440,6 +1715,7 @@ async function migrate() {
           DECLARE @verificado BIT = NULL;
           DECLARE @acepto_tratamiento_datos BIT = NULL;
           DECLARE @version_tratamiento_datos NVARCHAR(50) = NULL;
+          DECLARE @codigo_recuperacion NVARCHAR(10) = NULL;
 
           IF @DATA_JSON IS NOT NULL AND ISJSON(@DATA_JSON) > 0
           BEGIN
@@ -1454,6 +1730,7 @@ async function migrate() {
               SET @verificado = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.verificado') AS BIT);
               SET @acepto_tratamiento_datos = TRY_CAST(JSON_VALUE(@DATA_JSON, '$.acepto_tratamiento_datos') AS BIT);
               SET @version_tratamiento_datos = JSON_VALUE(@DATA_JSON, '$.version_tratamiento_datos');
+              SET @codigo_recuperacion = JSON_VALUE(@DATA_JSON, '$.codigo_recuperacion');
           END
 
           IF @ACCION = 'SELECT_BY_EMAIL'
@@ -1541,6 +1818,64 @@ async function migrate() {
               BEGIN
                   THROW 50000, 'Código de verificación inválido.', 1;
               END
+          END
+          ELSE IF @ACCION = 'SOLICITAR_RECUPERACION'
+          BEGIN
+              -- Un código nuevo reemplaza al anterior y reinicia los intentos; vence a los 15 minutos
+              UPDATE candidatos
+              SET codigo_recuperacion = @codigo_recuperacion,
+                  codigo_recuperacion_expira = DATEADD(MINUTE, 15, GETDATE()),
+                  intentos_recuperacion = 0,
+                  fecha_actualizacion = GETDATE()
+              WHERE email = @email;
+
+              SELECT (
+                  SELECT id, email
+                  FROM candidatos
+                  WHERE email = @email
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
+          END
+          ELSE IF @ACCION = 'RESTABLECER_PASSWORD'
+          BEGIN
+              DECLARE @codigo_rec_actual NVARCHAR(10) = NULL;
+              DECLARE @codigo_rec_expira DATETIME2 = NULL;
+              DECLARE @intentos_rec INT = 0;
+
+              SELECT @codigo_rec_actual = codigo_recuperacion,
+                     @codigo_rec_expira = codigo_recuperacion_expira,
+                     @intentos_rec = intentos_recuperacion
+              FROM candidatos
+              WHERE email = @email;
+
+              IF @codigo_rec_actual IS NULL OR @codigo_rec_expira < GETDATE() OR @intentos_rec >= 5
+              BEGIN
+                  THROW 50000, 'El código de recuperación no es válido o ya expiró. Solicita uno nuevo.', 1;
+              END
+
+              IF @codigo_rec_actual <> ISNULL(@codigo_recuperacion, '')
+              BEGIN
+                  UPDATE candidatos SET intentos_recuperacion = intentos_recuperacion + 1 WHERE email = @email;
+                  THROW 50000, 'El código de recuperación es incorrecto.', 1;
+              END
+
+              -- Recibir el código prueba que el correo es del candidato: también queda verificado
+              UPDATE candidatos
+              SET password_hash = @password_hash,
+                  codigo_recuperacion = NULL,
+                  codigo_recuperacion_expira = NULL,
+                  intentos_recuperacion = 0,
+                  verificado = 1,
+                  codigo_verificacion = NULL,
+                  fecha_actualizacion = GETDATE()
+              WHERE email = @email;
+
+              SELECT (
+                  SELECT id, email, verificado
+                  FROM candidatos
+                  WHERE email = @email
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
           END
       END;
     `);

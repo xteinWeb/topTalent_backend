@@ -1,0 +1,514 @@
+[
+  {
+    "categoria": "TRANSVERSAL",
+    "nombre": "Orientación al logro y resultados",
+    "definicion": "Convierte objetivos estratégicos y operativos en resultados medibles, sostenidos y rentables; cierra ciclos y corrige desviaciones sin perder foco en margen, servicio y cumplimiento.",
+    "conductas_observables": "Trabaja con metas y KPI claros; distingue actividad de resultado; corrige desvíos a tiempo; sostiene el resultado y no celebra cierres incompletos.",
+    "justificacion_peso": "Impacta directamente cumplimiento de meta, productividad, servicio y velocidad de cierre. Sin esta competencia la empresa ejecuta mucho y logra poco.",
+    "riesgo_organizacional": "Metas incumplidas, seguimiento cosmético, cierres a medias y desgaste sin impacto económico real.",
+    "pregunta_seleccion": "Entrevista BEI sobre una meta exigente con KPI inicial, brecha, decisiones tomadas, resultado, sostenibilidad y trade-offs.",
+    "criterio_evaluacion": "Aprobar solo con evidencia de resultado verificable; en roles D y C no debería bajar de 4/5.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.08
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 5.0,
+        "peso": 0.08
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.07
+      }
+    }
+  },
+  {
+    "categoria": "TRANSVERSAL",
+    "nombre": "Agilidad de aprendizaje y mejora continua",
+    "definicion": "Aprende rápido, incorpora feedback y transforma el aprendizaje en mejoras visibles de estándar, productividad, calidad o servicio.",
+    "conductas_observables": "Aprende nuevas herramientas o procesos sin tutela excesiva; convierte errores en aprendizajes; propone e implementa mejoras útiles.",
+    "justificacion_peso": "CRUSH exige adaptación rápida, adopción disciplinada y mejora continua. Tiene mayor peso donde el cambio técnico y de proceso será más frecuente.",
+    "riesgo_organizacional": "Repetición de errores, baja velocidad de adopción, resistencia al cambio y estancamiento del estándar.",
+    "pregunta_seleccion": "Caso de aprendizaje reciente: qué tuvo que aprender, cómo lo aplicó y qué resultado concreto mejoró.",
+    "criterio_evaluacion": "Exigir evidencia de transferencia del aprendizaje a mejora medible; no basta con cursos o intención.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.07
+      },
+      "OPERARIO": {
+        "nivel_requerido": 3.0,
+        "peso": 0.06
+      }
+    }
+  },
+  {
+    "categoria": "TRANSVERSAL",
+    "nombre": "Comunicación directa y respetuosa",
+    "definicion": "Comunica hechos, decisiones, riesgos y expectativas con claridad, oportunidad y respeto operativo, evitando ambigüedad, rumor y evasión.",
+    "conductas_observables": "Escala riesgos a tiempo; da feedback claro; pide precisión; comunica con respeto sin endulzar problemas ni esconder datos.",
+    "justificacion_peso": "La coordinación CRUSH depende de verdad con datos y de decisiones claras. La comunicación deficiente destruye velocidad y control.",
+    "riesgo_organizacional": "Errores por mala transferencia, escalamiento tardío, conflicto improductivo y decisiones mal entendidas.",
+    "pregunta_seleccion": "Role play o incidente crítico sobre una conversación difícil, un desvío o un escalamiento incómodo.",
+    "criterio_evaluacion": "Evaluar claridad, precisión, oportunidad y respeto; descartar estilos evasivos o agresivos.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 3.0,
+        "peso": 0.04
+      }
+    }
+  },
+  {
+    "categoria": "TRANSVERSAL",
+    "nombre": "Trabajo colaborativo e integración interáreas",
+    "definicion": "Integra áreas y actores para sostener el flujo completo de valor, priorizando el resultado global por encima del éxito aislado del área.",
+    "conductas_observables": "Comparte información crítica; destraba dependencias; coordina con comercial, planta, abastecimiento, calidad y soporte sin culpas estériles.",
+    "justificacion_peso": "La tesis CRUSH exige una sola lógica de rentabilidad y ejecución. Esta competencia protege flujo, OTIF y calidad transversal.",
+    "riesgo_organizacional": "Silos, reproceso, interrupciones de flujo, deterioro de promesa de servicio y luchas entre áreas.",
+    "pregunta_seleccion": "Caso donde dependía de otra área para cumplir y tuvo que coordinar sin autoridad formal o bajo presión.",
+    "criterio_evaluacion": "Aprobar con evidencia de coordinación efectiva; no sólo buena disposición personal.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      }
+    }
+  },
+  {
+    "categoria": "TRANSVERSAL",
+    "nombre": "Orientación al cliente interno y externo",
+    "definicion": "Comprende el impacto de su trabajo en el siguiente proceso y en el cliente final, protegiendo servicio, calidad y confiabilidad.",
+    "conductas_observables": "Entrega correcto y a tiempo; entiende la promesa de servicio; corrige fallas sin deteriorar estándar o margen.",
+    "justificacion_peso": "Los documentos conectan competitividad con OTIF, menor Lead Time y calidad externa; por eso toda función debe pensar en el siguiente cliente.",
+    "riesgo_organizacional": "Incumplimiento de servicio, devoluciones, fricción entre procesos y pérdida de reputación.",
+    "pregunta_seleccion": "Ejemplo de decisión donde balanceó tiempo, calidad y necesidad del cliente interno o externo.",
+    "criterio_evaluacion": "Buscar foco en servicio con criterio operativo, no complacencia improductiva.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.03
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.03
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "OPERARIO": {
+        "nivel_requerido": 3.0,
+        "peso": 0.05
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Visión estratégica y gestión rentable del negocio",
+    "definicion": "Define o soporta decisiones considerando margen, caja, ROIC, costo total, complejidad y escalabilidad; privilegia crecimiento rentable sobre crecimiento ciego.",
+    "conductas_observables": "Prioriza por retorno; cuestiona complejidad; relaciona decisiones con EBITDA, caja, mix y capacidad de absorción.",
+    "justificacion_peso": "La ambición CRUSH está explícitamente gobernada por EBITDA, ROIC, caja y rentabilidad. Es una competencia crítica para la capa directiva y de soporte analítico.",
+    "riesgo_organizacional": "Crecimiento sin rentabilidad, inversiones mal priorizadas, erosión de caja y expansión de complejidad improductiva.",
+    "pregunta_seleccion": "Caso de negocio con trade-offs entre margen, servicio, inversión o complejidad; pedir racional económico.",
+    "criterio_evaluacion": "En directivos exigir 4.5/5 o superior; en operarios se evalúa como conciencia de costo y uso responsable del recurso.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.13
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "ANALISTA": {
+        "nivel_requerido": 3.0,
+        "peso": 0.05
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 2.0,
+        "peso": 0.03
+      },
+      "OPERARIO": {
+        "nivel_requerido": 1.0,
+        "peso": 0.02
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Toma de decisiones basada en datos",
+    "definicion": "Sustenta decisiones en indicadores, evidencia y análisis de causa-efecto; usa datos para priorizar, corregir y verificar impacto.",
+    "conductas_observables": "Pide evidencia; analiza tendencia y causa raíz; valida impacto posterior; no decide por percepción o jerarquía solamente.",
+    "justificacion_peso": "\"Verdad con datos\" y gobierno único vía GPR son rasgos nucleares del modelo. Analistas y dirección cargan el mayor peso.",
+    "riesgo_organizacional": "Decisiones intuitivas, foco equivocado, tableros paralelos y baja trazabilidad de causas y resultados.",
+    "pregunta_seleccion": "Pedir una decisión importante y exigir qué datos usó, cómo los interpretó y qué cambió después.",
+    "criterio_evaluacion": "Descartar perfiles que hablan de intuición sin evidencia o que no verifican efectividad posterior.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.1
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.07
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.11
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 3.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 2.0,
+        "peso": 0.03
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Gestión del desempeño operativo",
+    "definicion": "Planifica, ejecuta, monitorea y corrige para cumplir seguridad, calidad, costo, entrega y productividad con disciplina de rutina.",
+    "conductas_observables": "Usa tableros y cadencias; corrige desvíos; organiza prioridades del turno o ciclo; sostiene ritmo y estándar sin improvisación.",
+    "justificacion_peso": "El modelo exige pasar de reactividad a control diario. Tiene peso máximo en coordinación y alto en operación/facilitación.",
+    "riesgo_organizacional": "Variabilidad, urgencia crónica, bajo OTIF, tiempos muertos, falta de escalamiento y promesas incumplidas.",
+    "pregunta_seleccion": "Caso de gestión diaria o semanal con metas, tablero, decisiones, contramedidas y aprendizaje.",
+    "criterio_evaluacion": "Para coordinadores no debería bajar de 4/5; pedir evidencia de rutina y sostenimiento, no solo esfuerzo personal.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 5.0,
+        "peso": 0.11
+      },
+      "ANALISTA": {
+        "nivel_requerido": 3.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Gestión de calidad e innovación aplicada",
+    "definicion": "Asegura calidad en origen y mejora competitividad mediante estándar, análisis técnico, reducción de variabilidad e innovación con caso de negocio.",
+    "conductas_observables": "Detiene errores en origen; identifica causa raíz; mejora diseño, método o proceso con impacto medible en calidad, costo o tiempo.",
+    "justificacion_peso": "La visión 2031 pone calidad, innovación y excelencia como diferenciadores. Debe ser innovación útil, no cosmética.",
+    "riesgo_organizacional": "Retrabajo, desperdicio, devoluciones, portafolio poco industrializable y mejoras sin retorno.",
+    "pregunta_seleccion": "Caso de mejora o innovación concreta con problema inicial, solución, indicador afectado y resultado.",
+    "criterio_evaluacion": "Exigir causalidad clara entre mejora y resultado; no aceptar innovación declarativa sin impacto.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.07
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Gestión del riesgo, seguridad y continuidad operativa",
+    "definicion": "Anticipa, controla y escala riesgos que afecten personas, activos, calidad, servicio o continuidad del flujo.",
+    "conductas_observables": "Detecta riesgos; aplica controles; cuida seguridad; reporta y escala incidentes o condiciones inseguras; protege continuidad.",
+    "justificacion_peso": "En industria, la continuidad operativa y la seguridad no son accesorias. Su peso sube en quienes están más expuestos al flujo físico.",
+    "riesgo_organizacional": "Accidentes, paros, no conformidades, daños de activo, incumplimiento de entrega y exposición legal.",
+    "pregunta_seleccion": "Caso donde identificó un riesgo y actuó para prevenirlo, controlarlo o escalarlo a tiempo.",
+    "criterio_evaluacion": "En operarios y coordinadores el mínimo sugerido es 4/5; tolerancia cero a normalizar condiciones inseguras.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "ANALISTA": {
+        "nivel_requerido": 3.0,
+        "peso": 0.04
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "OPERARIO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.08
+      }
+    }
+  },
+  {
+    "categoria": "ESPECIFICA",
+    "nombre": "Liderazgo y desarrollo de personas",
+    "definicion": "Alinea, moviliza y desarrolla a otros con exigencia, claridad, seguimiento y ejemplo; fortalece mandos medios y reduce dependencia del CEO.",
+    "conductas_observables": "Define expectativas; corrige bajo desempeño; desarrolla autonomía; instala rituales; forma mandos medios y sucesores.",
+    "justificacion_peso": "Los documentos señalan como crítica la robustez de líderes medios y la menor dependencia del fundador. Es central en directivos y coordinadores.",
+    "riesgo_organizacional": "Equipos desalineados, baja autonomía, microgestión, rotación evitable y sobrecarga del CEO.",
+    "pregunta_seleccion": "Caso de feedback, corrección de desempeño, formación de un mando medio o desarrollo de autonomía en el equipo.",
+    "criterio_evaluacion": "Para directivos debe exigirse evidencia de desarrollo real de personas, no solo control de tareas.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.12
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.09
+      },
+      "ANALISTA": {
+        "nivel_requerido": 2.0,
+        "peso": 0.02
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 2.0,
+        "peso": 0.03
+      },
+      "OPERARIO": {
+        "nivel_requerido": 1.0,
+        "peso": 0.02
+      }
+    }
+  },
+  {
+    "categoria": "VALOR",
+    "nombre": "Locus de control interno",
+    "definicion": "Explica los resultados desde la propia acción, decisión y disciplina antes que desde el contexto; asume responsabilidad sobre lo controlable.",
+    "conductas_observables": "Asume su parte en fallas y logros; evita el victimismo; propone acciones bajo su control; aprende del error sin externalizar culpas.",
+    "justificacion_peso": "Los riesgos culturales declarados incluyen excusas sin dueño. Este valor es base para velocidad de corrección y madurez operacional.",
+    "riesgo_organizacional": "Cultura victimista, baja autocrítica, aprendizaje débil y lentitud para corregir.",
+    "pregunta_seleccion": "Profundizar en un fracaso o error relevante y observar si asume responsabilidad real o sólo culpa el contexto.",
+    "criterio_evaluacion": "Descartar candidatos que racionalizan todo desde terceros o desde la mala suerte.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      }
+    }
+  },
+  {
+    "categoria": "VALOR",
+    "nombre": "Agencia propia",
+    "definicion": "Actúa sobre la realidad sin esperar empuje externo permanente; toma iniciativa resolutiva y mueve temas importantes con criterio.",
+    "conductas_observables": "Toma iniciativa; propone alternativas; destraba problemas; no espera instrucciones obvias para actuar sobre lo importante.",
+    "justificacion_peso": "CRUSH requiere velocidad con método. La agencia es decisiva donde la empresa no puede depender de empuje jerárquico constante.",
+    "riesgo_organizacional": "Pasividad, lentitud, dependencia excesiva del jefe y problemas que se pudren por falta de acción.",
+    "pregunta_seleccion": "Pedir ejemplo de una mejora o solución iniciada sin instrucción directa y validada en resultado.",
+    "criterio_evaluacion": "Buscar iniciativa con criterio; no confundir agencia con impulsividad.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.04
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.08
+      }
+    }
+  },
+  {
+    "categoria": "VALOR",
+    "nombre": "Accountability",
+    "definicion": "Se compromete con entregables, fechas y resultados; hace seguimiento y responde por el cierre sin diluir responsabilidad.",
+    "conductas_observables": "Define responsable, fecha y entregable; hace seguimiento; informa desvíos temprano; cierra y verifica efectividad.",
+    "justificacion_peso": "\"Lo que no tiene dueño, no ocurre\" es un principio rector. Este valor debe operar como filtro duro de entrada.",
+    "riesgo_organizacional": "Compromisos sin cierre, reuniones improductivas, seguimiento débil y pérdida de confiabilidad del sistema.",
+    "pregunta_seleccion": "Explorar un compromiso crítico: cómo definió responsable/fecha, cómo siguió y cómo cerró la brecha.",
+    "criterio_evaluacion": "No contratar perfiles con discurso de intención y baja trazabilidad de cierre.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.08
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 5.0,
+        "peso": 0.08
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.09
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.1
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.1
+      }
+    }
+  },
+  {
+    "categoria": "VALOR",
+    "nombre": "Orientación a la excelencia",
+    "definicion": "Busca hacer bien desde la primera vez y elevar el estándar; no normaliza el error, el retrabajo ni la mediocridad operativa.",
+    "conductas_observables": "Verifica antes de liberar; cuestiona prácticas deficientes; busca calidad en origen; eleva el estándar visible del trabajo.",
+    "justificacion_peso": "La empresa aspira a ser referente en calidad, innovación y excelencia. Este valor pesa más donde se juega la calidad en origen.",
+    "riesgo_organizacional": "Normalización del error, variabilidad, retrabajo, quejas y degradación del estándar.",
+    "pregunta_seleccion": "Caso donde detuvo una mala práctica, rechazó un trabajo deficiente o elevó un estándar con efecto concreto.",
+    "criterio_evaluacion": "Exigir intolerancia sana al error repetido y foco en hacer bien desde el origen.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.04
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.07
+      },
+      "OPERARIO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.1
+      }
+    }
+  },
+  {
+    "categoria": "VALOR",
+    "nombre": "Disciplina operativa y cuidado del recurso",
+    "definicion": "Respeta estándar, método, seguridad, orden y uso eficiente de tiempo, materiales, equipos e información; protege el margen desde la ejecución diaria.",
+    "conductas_observables": "Cumple procedimiento; cuida material y tiempo; sostiene orden y seguridad; evita improvisación que erosiona costo o calidad.",
+    "justificacion_peso": "El modelo dice explícitamente que el orden precede a la expansión y que la complejidad destruye margen. Esta es la traducción conductual de ese principio.",
+    "riesgo_organizacional": "Improvisación, desperdicio, accidentes, baja productividad, variabilidad y erosión de margen.",
+    "pregunta_seleccion": "Ejemplo concreto sobre estándar, 5S, cuidado de material, reducción de desperdicio o cumplimiento metódico bajo presión.",
+    "criterio_evaluacion": "En operación el mínimo recomendado es 4/5; no admitir perfiles que justifican saltarse el método.",
+    "grupos": {
+      "DIRECTIVO": {
+        "nivel_requerido": 4.0,
+        "peso": 0.05
+      },
+      "COORDINADOR": {
+        "nivel_requerido": 5.0,
+        "peso": 0.1
+      },
+      "ANALISTA": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "FACILITADOR": {
+        "nivel_requerido": 4.0,
+        "peso": 0.06
+      },
+      "OPERARIO": {
+        "nivel_requerido": 5.0,
+        "peso": 0.1
+      }
+    }
+  }
+]
