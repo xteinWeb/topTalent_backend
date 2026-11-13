@@ -25,3 +25,6 @@ out/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Configuración de PM2 con credenciales: solo vive en cada servidor, nunca en el repositorio
+ecosystem.config.js
