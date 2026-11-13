@@ -209,7 +209,11 @@ exports.create = async (req, res) => {
     if (!area || !cargo || !perfil_json) {
       return res.status(400).json({ error: 'Faltan campos obligatorios: area, cargo, perfil_json' });
     }
-    if (grupo_cargo && !ES_GRUPO_VALIDO(grupo_cargo)) {
+    // Todo perfil nuevo debe quedar vinculado a la matriz de competencias de su grupo de cargo
+    if (!grupo_cargo) {
+      return res.status(400).json({ error: 'Seleccione la matriz de competencias (grupo de cargo) del perfil.' });
+    }
+    if (!ES_GRUPO_VALIDO(grupo_cargo)) {
       return res.status(400).json({ error: `Grupo de cargo no válido: "${grupo_cargo}".` });
     }
 
@@ -252,6 +256,30 @@ exports.create = async (req, res) => {
   }
 };
 
+// PATCH asignar la matriz de competencias (grupo de cargo) sin editar el resto del perfil
+exports.asignarGrupoCargo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { grupo_cargo } = req.body;
+    if (!grupo_cargo || !ES_GRUPO_VALIDO(grupo_cargo)) {
+      return res.status(400).json({ error: 'Seleccione una matriz de competencias (grupo de cargo) válida.' });
+    }
+
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'ASIGNAR_GRUPO_CARGO')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ id, grupo_cargo }))
+      .execute('spPerfilesCargo');
+
+    const raw = result.recordset[0] && result.recordset[0]['DATOS'];
+    if (!raw) return res.status(404).json({ error: 'Perfil de cargo no encontrado.' });
+    res.json({ data: JSON.parse(raw) });
+  } catch (err) {
+    console.error('Error al asignar la matriz de competencias:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // PUT update a profile
 exports.update = async (req, res) => {
   try {
@@ -267,12 +295,15 @@ exports.update = async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'lider_id')) {
       datos.lider_id = req.body.lider_id || null;
     }
-    // Igual con el grupo de cargo de la matriz de competencias
+    // Igual con el grupo de cargo de la matriz de competencias (se puede cambiar, pero no quitar)
     if (Object.prototype.hasOwnProperty.call(req.body, 'grupo_cargo')) {
-      if (req.body.grupo_cargo && !ES_GRUPO_VALIDO(req.body.grupo_cargo)) {
+      if (!req.body.grupo_cargo) {
+        return res.status(400).json({ error: 'Seleccione la matriz de competencias (grupo de cargo) del perfil.' });
+      }
+      if (!ES_GRUPO_VALIDO(req.body.grupo_cargo)) {
         return res.status(400).json({ error: `Grupo de cargo no válido: "${req.body.grupo_cargo}".` });
       }
-      datos.grupo_cargo = req.body.grupo_cargo || null;
+      datos.grupo_cargo = req.body.grupo_cargo;
     }
 
     const pool = await poolPromise;

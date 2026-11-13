@@ -7,6 +7,8 @@ module.exports = {
       watch: false,
 
       // Variables de entorno POR DEFECTO (Producción)
+      // JWT_SECRET NO va aquí (este archivo está en un repositorio público): se define en el .env del servidor.
+      // Sin él el backend no arranca.
       env: {
         NODE_ENV: 'development',
         PORT: 3800,

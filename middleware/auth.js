@@ -4,7 +4,8 @@ require('dotenv').config();
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   // Sin secreto no se puede firmar ni verificar ningún token: mejor no arrancar que arrancar inseguro.
-  throw new Error('JWT_SECRET no está configurado. Defínalo en el .env o en ecosystem.config.js.');
+  // Va en el .env del servidor, no en ecosystem.config.js: ese archivo está en un repositorio público.
+  throw new Error('JWT_SECRET no está configurado. Defínalo en el .env del servidor (un valor largo y aleatorio, distinto por ambiente).');
 }
 
 const ADMIN_EXPIRES_IN = process.env.JWT_ADMIN_EXPIRES_IN || '8h';

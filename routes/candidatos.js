@@ -8,6 +8,7 @@ const { requireCandidato } = require('../middleware/auth');
 router.post('/registro', candidatosController.registro);
 router.post('/login', candidatosController.login);
 router.post('/verificar', candidatosController.verificar);
+router.post('/reenviar-codigo', candidatosController.reenviarCodigo);
 router.post('/recuperar', candidatosController.solicitarRecuperacion);
 router.post('/restablecer', candidatosController.restablecerPassword);
 router.get('/perfil', requireCandidato, candidatosController.getPerfil);
