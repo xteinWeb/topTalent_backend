@@ -54,45 +54,87 @@ exports.registro = async (req, res) => {
 
     // Hash the password
     const passwordHash = await bcrypt.hash(password, 10);
-    // Generate a 6-digit verification code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-
-    console.log(`=========================================`);
-    console.log(`CÓDIGO DE VERIFICACIÓN ENVIADO A: ${email} -> ${verificationCode}`);
-    console.log(`=========================================`);
+    const verificationCode = generarCodigo();
 
     const pool = await poolPromise;
-    pool.request()
-      .input('ACCION', sql.VarChar(50), 'INSERT')
-      .input('DATA_JSON', sql.VarChar, JSON.stringify({
-        email,
-        password_hash: passwordHash,
-        codigo_verificacion: verificationCode,
-        verificado: 0,
-        acepto_tratamiento_datos: true,
-        version_tratamiento_datos: VERSION_TRATAMIENTO_DATOS
-      }))
-      .execute('spCandidatos')
-      .then(async function (recordSet) {
-        try {
-          await sendVerificationEmail(email, verificationCode);
-          console.log(`Correo de verificación enviado exitosamente a: ${email}`);
-        } catch (mailErr) {
-          console.error('Error al enviar el correo de verificación:', mailErr);
-        }
-        
-        res.status(201).json({
-          success: true,
-          message: 'Código de verificación enviado al correo.',
-          email: email
-        });
-      })
-      .catch((err) => {
-        console.error(err);
-        res.status(500).json({ error: err.originalError ? err.originalError.info.message : err.message });
+    try {
+      await pool.request()
+        .input('ACCION', sql.VarChar(50), 'INSERT')
+        .input('DATA_JSON', sql.VarChar, JSON.stringify({
+          email,
+          password_hash: passwordHash,
+          codigo_verificacion: verificationCode,
+          verificado: 0,
+          acepto_tratamiento_datos: true,
+          version_tratamiento_datos: VERSION_TRATAMIENTO_DATOS
+        }))
+        .execute('spCandidatos');
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.originalError ? err.originalError.info.message : err.message });
+    }
+
+    try {
+      await sendVerificationEmail(email, verificationCode);
+    } catch (mailErr) {
+      console.error('Error al enviar el correo de verificación:', mailErr);
+      // La cuenta ya quedó creada: el front pasa al paso del código para que el candidato pueda pedir el reenvío
+      return res.status(502).json({
+        error: 'Tu cuenta quedó creada, pero no pudimos enviarte el código de verificación. Intenta reenviarlo en unos minutos.',
+        cuenta_creada: true,
+        email
       });
+    }
+
+    registrarSolicitud(`verificacion:${email.toLowerCase()}`);
+    res.status(201).json({
+      success: true,
+      message: 'Código de verificación enviado al correo.',
+      email: email
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+};
+
+// Reenviar código de verificación a una cuenta de candidato sin verificar
+exports.reenviarCodigo = async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim();
+    if (!email) {
+      return res.status(400).json({ error: 'Debe ingresar su correo electrónico.' });
+    }
+
+    const clave = `verificacion:${email.toLowerCase()}`;
+    if (!registrarSolicitud(clave)) {
+      return res.status(429).json({ error: 'Ya enviamos un código hace poco. Espera un minuto antes de solicitar otro.' });
+    }
+
+    const codigo = generarCodigo();
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('ACCION', sql.VarChar(50), 'REENVIAR_VERIFICACION')
+      .input('DATA_JSON', sql.VarChar, JSON.stringify({ email, codigo_verificacion: codigo }))
+      .execute('spCandidatos');
+
+    const raw = result.recordset[0] && result.recordset[0]["DATOS"];
+    if (!raw) {
+      liberarSolicitud(clave);
+      return res.status(400).json({ error: 'No hay una cuenta pendiente de verificar con ese correo. Si ya la verificaste, inicia sesión.' });
+    }
+
+    try {
+      await sendVerificationEmail(email, codigo);
+    } catch (mailErr) {
+      console.error('Error al reenviar el correo de verificación:', mailErr);
+      liberarSolicitud(clave);
+      return res.status(502).json({ error: 'No pudimos enviarte el código de verificación. Intenta nuevamente en unos minutos.' });
+    }
+
+    res.json({ success: true, message: 'Te enviamos un nuevo código de verificación.' });
+  } catch (err) {
+    console.error('Error al reenviar código de verificación:', err);
+    res.status(500).json({ error: 'No se pudo procesar la solicitud. Intente nuevamente.' });
   }
 };
 

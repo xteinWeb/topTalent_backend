@@ -24,6 +24,9 @@ router.post('/', requireAdmin('TALENTO_HUMANO'), perfilesController.create);
 // PUT update a profile
 router.put('/:id', requireAdmin('TALENTO_HUMANO'), perfilesController.update);
 
+// PATCH asignar la matriz de competencias (grupo de cargo)
+router.patch('/:id/grupo-cargo', requireAdmin('TALENTO_HUMANO'), perfilesController.asignarGrupoCargo);
+
 // DELETE a profile
 router.delete('/:id', requireAdmin('TALENTO_HUMANO'), perfilesController.delete);
 

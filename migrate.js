@@ -6,6 +6,7 @@ const { migrateMejorasSeleccion } = require('./migrations/mejorasSeleccion');
 const { migratePrefiltro } = require('./migrations/prefiltro');
 const { migrateMatrizCompetencias } = require('./migrations/matrizCompetencias');
 const { migrateReportes } = require('./migrations/reportes');
+const { TURNOS, migrateTurnosVacantes } = require('./migrations/turnos');
 
 async function migrate() {
     try {
@@ -83,8 +84,11 @@ async function migrate() {
             await pool.request().query(alterUsuariosColsQuery);
         }
 
-        // Seed initial users for company '00' for role testing
-        const seedUsers = [
+        // Usuarios de prueba por rol: SOLO en bases de desarrollo (*_DEV). Sus contraseñas son públicas (están en el
+        // repositorio), así que en producción nunca se crean; ahí los usuarios se crean desde la pantalla Usuarios.
+        const baseActual = (await pool.request().query('SELECT DB_NAME() AS nombre')).recordset[0].nombre;
+        const esBaseDesarrollo = /_DEV$/i.test(baseActual);
+        const seedUsers = !esBaseDesarrollo ? [] : [
             { username: 'admin', nombre: 'Administrador Artdecon', email: 'admin@artdecon.com', rol: 'SUPERADMIN', pass: 'admin123', area: 'Dirección' },
             { username: 'gerencia', nombre: 'Gerencia General', email: 'gerencia@artdecon.com', rol: 'GERENCIA', pass: 'gerencia123', area: 'Gerencia' },
             { username: 'talento', nombre: 'Evelyn Alfaro (Talento Humano)', email: 'talento@artdecon.com', rol: 'TALENTO_HUMANO', pass: 'talento123', area: 'Talento Humano' },
@@ -112,6 +116,13 @@ async function migrate() {
                         VALUES (@empresa_id, @nombre, @username, @email, @password_hash, @rol, @area, 1)
                     `);
                 console.log(`Usuario ${u.username} (${u.rol}) creado exitosamente.`);
+            }
+        }
+        if (!esBaseDesarrollo) {
+            console.log(`Base "${baseActual}" no es de desarrollo: no se crean usuarios de prueba.`);
+            const activos = (await pool.request().query('SELECT COUNT(*) AS total FROM usuarios_admin WHERE activo = 1')).recordset[0].total;
+            if (activos === 0) {
+                console.warn('ATENCIÓN: no hay ningún usuario administrativo activo. Cree uno (Superadmin) directamente en la base para poder ingresar.');
             }
         }
 
@@ -507,6 +518,7 @@ async function migrate() {
         // Seed catalogos with initial values (only if empty for each tipo)
         console.log('Seeding catalogos...');
         const seedCatalogos = [
+            { tipo: 'TURNO', valores: TURNOS },
             // "Otro" (con texto libre) no va en el catálogo: lo agrega la aplicación siempre al final
             { tipo: 'MOTIVO_NO_APROBADO', valores: [
                 'No cumple la experiencia requerida',
@@ -582,6 +594,7 @@ async function migrate() {
                 console.log(`Catalogo "${grupo.tipo}" ya tiene datos. Se omite siembra.`);
             }
         }
+        await migrateTurnosVacantes(pool, sql);
 
         // Create/Update spCatalogos
         console.log('Creating/Updating Stored Procedure spCatalogos...');
@@ -1038,6 +1051,21 @@ async function migrate() {
               WHERE id = @id;
 
               SELECT '{"message": "Perfil actualizado exitosamente"}' AS DATOS;
+          END
+          ELSE IF @ACCION = 'ASIGNAR_GRUPO_CARGO'
+          BEGIN
+              -- Solo cambia la matriz de competencias; el resto del perfil queda igual
+              UPDATE perfiles_cargo
+              SET grupo_cargo = @grupo_cargo,
+                  fecha_actualizacion = GETDATE()
+              WHERE id = @id;
+
+              SELECT (
+                  SELECT id, cargo, grupo_cargo
+                  FROM perfiles_cargo
+                  WHERE id = @id
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
           END
           ELSE IF @ACCION = 'DELETE'
           BEGIN
@@ -1818,6 +1846,21 @@ async function migrate() {
               BEGIN
                   THROW 50000, 'Código de verificación inválido.', 1;
               END
+          END
+          ELSE IF @ACCION = 'REENVIAR_VERIFICACION'
+          BEGIN
+              -- Solo aplica a cuentas sin verificar: el código nuevo reemplaza al anterior
+              UPDATE candidatos
+              SET codigo_verificacion = @codigo_verificacion,
+                  fecha_actualizacion = GETDATE()
+              WHERE email = @email AND verificado = 0;
+
+              SELECT (
+                  SELECT id, email
+                  FROM candidatos
+                  WHERE email = @email AND verificado = 0
+                  FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+              ) AS DATOS;
           END
           ELSE IF @ACCION = 'SOLICITAR_RECUPERACION'
           BEGIN
